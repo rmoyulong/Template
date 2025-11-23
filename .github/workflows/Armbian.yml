@@ -23,7 +23,7 @@ jobs:
         RELEASE:
           # - focal # Ubuntu 20.04 LTS
           # - jammy # Ubuntu 22.04 LTS
-          # - noble # Ubuntu 24.04 LTS
+          #- noble # Ubuntu 24.04 LTS
           #- oracular # Ubuntu 24.10
           #- plucky # Ubuntu 25.04
           # - buster # Debian 10
@@ -34,7 +34,7 @@ jobs:
         TYPE:
           - minimal
           - server
-          # - xfce
+          #- xfce
           
     steps:
       - uses: armbian/build@main
@@ -47,4 +47,3 @@ jobs:
           armbian_kernel_branch:    "current"
           armbian_ui:               "${{ matrix.TYPE }}"
           armbian_release_tittle:   "玩客云三代(WS1608) Armbian镜像"
-
