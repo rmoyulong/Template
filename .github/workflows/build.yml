@@ -201,12 +201,7 @@ jobs:
         TYPE:
           - minimal
           - cli
-          - desktop
-        include:
-          - TYPE: desktop
-            DESKTOP_ENVIRONMENT: xfce
-            DESKTOP_ENVIRONMENT_CONFIG_NAME: config_base
-            DESKTOP_APPGROUPS_SELECTED: ""
+          #- desktop
 
     steps:
       - name: 导入环境参数
@@ -337,3 +332,4 @@ jobs:
           body_path: Release.md
           files: |
             output/images/*
+
