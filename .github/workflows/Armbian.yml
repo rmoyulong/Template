@@ -26,7 +26,7 @@ jobs:
           # - jammy # Ubuntu 22.04 LTS
           #- noble # Ubuntu 24.04 LTS
           #- oracular # Ubuntu 24.10
-          #- plucky # Ubuntu 25.04
+          - plucky # Ubuntu 25.04
           # - buster # Debian 10
           - bullseye # Debian 11
           - bookworm # Debian 12
