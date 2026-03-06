@@ -8,10 +8,8 @@ on:
         required: true
         default: "main"
         options:
+        - v26.2.1
         - v25.11.1
-        - v25.11.0-trunk.498
-        - v25.11.0-trunk.457
-        - v25.11.0-trunk.414
         - main
         
 jobs:
