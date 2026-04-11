@@ -9,7 +9,7 @@ on:
         default: "main"
         options:
         - v26.2.1
-        - v26.2.0-trunk.682
+        - v26.02
         - main
         
         
