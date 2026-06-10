@@ -8,8 +8,8 @@ on:
         required: true
         default: "main"
         options:
-        - v26.2.1
-        - v26.02
+        - v26.8.0-trunk.121
+        - v26.5.1
         - main
         
         
