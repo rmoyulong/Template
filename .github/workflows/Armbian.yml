@@ -44,6 +44,6 @@ jobs:
           armbian_target:    "build"                        # build=image, kernel=kernel
           armbian_board:     "onecloud"                   # build target
           armbian_branch:    "${{ inputs.branch_version }}"
-          armbian_kernel_branch:    "edge"
+          armbian_kernel_branch:    "current"
           armbian_ui:               "${{ matrix.TYPE }}"
           armbian_release_tittle:   "玩客云三代(WS1608)Armbian官方镜像"
