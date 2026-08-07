@@ -41,7 +41,7 @@ jobs:
         with:
           armbian_token:     "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
           armbian_release:   "${{ matrix.RELEASE }}"                        # userspace
-          armbian_target:    "build"                        # build=image, kernel=kernel
+          armbian_target:    "image"                        # build=image, kernel=kernel
           armbian_board:     "onecloud"                   # build target
           armbian_branch:    "${{ inputs.branch_version }}"
           armbian_kernel_branch:    "current"
