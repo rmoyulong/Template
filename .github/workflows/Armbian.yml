@@ -37,7 +37,7 @@ jobs:
           #- xfce
           
     steps:
-      - uses: rmoyulong/build@main
+      - uses: armbian/build@main
         with:
           armbian_token:     "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
           armbian_release:   "${{ matrix.RELEASE }}"                        # userspace
@@ -46,4 +46,6 @@ jobs:
           armbian_branch:    "${{ inputs.branch_version }}"
           armbian_kernel_branch:    "current"
           armbian_ui:               "${{ matrix.TYPE }}"
-          armbian_release_title:   "玩客云三代(WS1608)Armbian官方镜像"
+          armbian_artifacts:    "build/output/images/"
+          armbian_compress:    "sha,img,xz"
+          armbian_release_title:   "Armbian image-玩客云三代(WS1608)官方镜像"
