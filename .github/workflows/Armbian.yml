@@ -48,4 +48,4 @@ jobs:
           armbian_ui:    "${{ matrix.TYPE }}"
           armbian_artifacts:    "build/output/images/"
           armbian_compress:    "sha,img,xz"
-          armbian_release_title:    "Armbian image-玩客云三代(WS1608)官方镜像"
+          armbian_release_title:    "Armbian image 玩客云三代(WS1608)官方镜像"
