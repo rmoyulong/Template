@@ -37,7 +37,7 @@ jobs:
           #- xfce
           
     steps:
-      - uses: armbain/build@v26.5.1
+      - uses: armbain/build@main
         with:
           armbian_token:    "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
           armbian_release:    "${{ matrix.RELEASE }}"                        # userspace
