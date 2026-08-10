@@ -6,10 +6,10 @@ on:
         type: choice
         description: 选择源码分支
         required: true
-        default: "v26.2.1"
+        default: "v26.2.2"
         options:
-        - v26.5.1
-        - v26.2.1
+        - v26.5.2
+        - v26.2.2
         - main
         
         
@@ -37,7 +37,7 @@ jobs:
           #- xfce
           
     steps:
-      - uses: armbian/build@main
+      - uses: Demizera/build@main
         with:
           armbian_token:    "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
           armbian_release:    "${{ matrix.RELEASE }}"                        # userspace
