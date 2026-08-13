@@ -6,11 +6,14 @@ on:
         type: choice
         description: 选择源码分支
         required: true
-        default: "v26.11.0-trunk.4"
+        default: "v26.2.0-trunk.890"
         options:
         - v26.11.0-trunk.4
+        - v26.8.0-trunk.424
         - v26.5.1
         - v26.2.1
+        - v26.2.0-trunk.890
+        - v25.11.1
         - main
         
         
@@ -38,7 +41,7 @@ jobs:
           #- xfce
           
     steps:
-      - uses: armbian/build@v26.11.0-trunk.4
+      - uses: armbian/build@main
         with:
           armbian_token:    "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
           armbian_release:    "${{ matrix.RELEASE }}"                        # userspace
