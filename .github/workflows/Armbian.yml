@@ -41,7 +41,7 @@ jobs:
           #- xfce
           
     steps:
-      - uses: armbian/build@v26.2.1
+      - uses: armbian/build@v26.2.0-trunk.890
         with:
           armbian_token:    "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
           armbian_release:    "${{ matrix.RELEASE }}"                        # userspace
