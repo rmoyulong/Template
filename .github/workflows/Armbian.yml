@@ -8,7 +8,7 @@ on:
         required: true
         default: "v26.2.1"
         options:
-        - v26.11.0-trunk.4
+        - v26.11.0-trunk.11
         - v26.8.0-trunk.424
         - v26.5.1
         - v26.2.1
@@ -41,7 +41,7 @@ jobs:
           #- xfce
           
     steps:
-      - uses: armbian/build@v26.2.0-trunk.890
+      - uses: armbian/build@${{ inputs.branch_version }}
         with:
           armbian_token:    "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
           armbian_release:    "${{ matrix.RELEASE }}"                        # userspace
