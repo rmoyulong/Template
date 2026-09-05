@@ -8,11 +8,8 @@ on:
         required: true
         default: "v26.2.1"
         options:
-        - v26.11.0-trunk.22
-        - v26.8.0-trunk.424
-        - v26.5.1
+        - v26.11.0-trunk.30
         - v26.2.1
-        - v26.2.0-trunk.890
         - v25.11.1
         - main
         
@@ -41,7 +38,7 @@ jobs:
           #- xfce
           
     steps:
-      - uses: armbian/build@main
+      - uses: armbian/build@v26.2.1
         with:
           armbian_token:    "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
           armbian_release:    "${{ matrix.RELEASE }}"                        # userspace
@@ -50,6 +47,6 @@ jobs:
           armbian_branch:    "${{ inputs.branch_version }}"
           armbian_kernel_branch:    "current"
           armbian_ui:    "${{ matrix.TYPE }}"
-          #armbian_artifacts:    "build/output/images/"
-          #armbian_compress:    "sha,img,xz"
+          armbian_artifacts:    "build/output/images/"
+          armbian_compress:    "sha,img,xz"
           armbian_release_title:    "Armbian image 玩客云三代(WS1608)官方镜像"
