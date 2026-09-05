@@ -38,7 +38,7 @@ jobs:
           #- xfce
           
     steps:
-      - uses: armbian/build@v26.2.1
+      - uses: armbian/build@main
         with:
           armbian_token:    "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
           armbian_release:    "${{ matrix.RELEASE }}"                        # userspace
@@ -47,6 +47,4 @@ jobs:
           armbian_branch:    "${{ inputs.branch_version }}"
           armbian_kernel_branch:    "current"
           armbian_ui:    "${{ matrix.TYPE }}"
-          armbian_artifacts:    "build/output/images/"
-          armbian_compress:    "sha,img,xz"
           armbian_release_title:    "Armbian image 玩客云三代(WS1608)官方镜像"
