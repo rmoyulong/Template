@@ -6,7 +6,7 @@ on:
         type: choice
         description: 选择源码分支
         required: true
-        default: "v26.2.1"
+        default: "main"
         options:
         - v26.11.0-trunk.40
         - v26.2.1
@@ -38,7 +38,7 @@ jobs:
           #- xfce
           
     steps:
-      - uses: armbian/build@main
+      - uses: rmoyulong/build@main
         with:
           armbian_token:    "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
           armbian_release:    "${{ matrix.RELEASE }}"                        # userspace
