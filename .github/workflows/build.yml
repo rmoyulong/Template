@@ -89,7 +89,7 @@ jobs:
       - name: 生成发布信息
         run: |
           cat <<EOF | sed -E 's/^  //' | tee Release.md
-            解锁版-$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
+            解锁版${{ env.ARMBIAN_TAG }}-$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
 
             # Sources
             Script: [${SCRIPT_REPO}@${SCRIPT_REF}](https://github.com/${SCRIPT_REPO}/tree/${SCRIPT_REF}) ([\`${SCRIPT_SHA}\`](https://github.com/${SCRIPT_REPO}/tree/${SCRIPT_SHA}))
