@@ -5,10 +5,18 @@ on:
 
 env:
   kernel_Version: 6.12.115
-  
+
 jobs:
-  build:
+  union_core:
+    name: ${{ matrix.config_type }} 固件编译
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config_type:
+          - 普通内核
+          - RT实时内核 
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -28,19 +36,25 @@ jobs:
       - name: 配置内核
         working-directory: linux-${{ env.kernel_Version }}
         run: |
-          # 使用当前运行器环境的默认配置，确保能启动基础环境
-          # 用脚本强制修改配置
-          ./scripts/config --enable EXPERT
-          ./scripts/config --disable PREEMPT_NONE
-          ./scripts/config --disable PREEMPT_VOLUNTARY
-          ./scripts/config --enable PREEMPTION
-          ./scripts/config --enable PREEMPT_RT
+          if [[ "${{ matrix.config_type }}" == "RT实时内核" ]]; then
+            # 用脚本强制修改配置
+            ./scripts/config --enable EXPERT
+            ./scripts/config --disable PREEMPT_NONE
+            ./scripts/config --disable PREEMPT_VOLUNTARY
+            ./scripts/config --enable PREEMPTION
+            ./scripts/config --enable PREEMPT_RT
           
-          # 自动处理依赖并应用
-          make defconfig
+            # 自动处理依赖并应用
+            make defconfig
+            
+            # 4.检查是否真的生效了
+            grep "CONFIG_PREEMPT_RT=y" .config
+            
+          else
+            # 使用当前运行器环境的默认配置，确保能启动基础环境
+            make defconfig
+          fi        
           
-          # 4.检查是否真的生效了
-          grep "CONFIG_PREEMPT_RT=y" .config          
 
       - name: 构建内核与模块
         working-directory: linux-${{ env.kernel_Version }}
@@ -59,11 +73,11 @@ jobs:
       - name: 上传内核镜像
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-image
+          name: kernel-image-${{ matrix.config_type }}
           path: linux-${{ env.kernel_Version }}/arch/x86/boot/bzImage
 
       - name: 上传内核模块
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-modules
+          name: kernel-modules-${{ matrix.config_type }}
           path: ${{ github.workspace }}/modules-staging/lib/modules/
