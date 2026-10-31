@@ -57,7 +57,7 @@ jobs:
           sudo debootstrap \
             --arch=amd64 \
             --variant=minbase \
-            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved \
+            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64 \
             "$DEBIAN_SUITE" "$ROOTFS_DIR" \
             http://deb.debian.org/debian/
 
