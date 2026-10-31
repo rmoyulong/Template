@@ -66,7 +66,7 @@ jobs:
         run: |
           # 关键一步：把编译好的模块装到临时目录，而不是 /usr/lib/modules/
           
-          #/usr/lib/modules/6.12.114，任务一结束就没了，你也拿不到。所以必须用 INSTALL_MOD_PATH 指定一个工作区内的临时路径modules-staging
+          #/usr/lib/modules/6.12.xxx，任务一结束就没了，你也拿不到。所以必须用 INSTALL_MOD_PATH 指定一个工作区内的临时路径modules-staging
           mkdir -p ${{ github.workspace }}/modules-staging
           make INSTALL_MOD_PATH=${{ github.workspace }}/modules-staging modules_install
 
