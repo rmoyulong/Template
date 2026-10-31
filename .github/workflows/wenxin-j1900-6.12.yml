@@ -1,0 +1,68 @@
+name: Build RT Kernel 6.12
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses-dev flex bison \
+            libssl-dev bc dwarves git cpio xz-utils
+
+      - name: Clone kernel
+        run: |
+          git clone --depth 1 -b v6.12 https://github.com/torvalds/linux.git kernel
+          cd kernel
+          # 拉 RT 补丁（示例，具体以 linux-rt-devel 对应版本为准）
+          curl -L https://cdn.kernel.org/pub/linux/kernel/projects/rt/6.12/patch-6.12.111-rt21.patch.xz | xz -d | patch -p1
+
+      - name: Configure
+        run: |
+          cp ${{ github.workspace }}/patch/j1900andj1800-RT kernel/.config
+          cd kernel
+          make olddefconfig
+          scripts/config --enable PREEMPT_RT
+          scripts/config --enable HZ_1000
+          make olddefconfig
+
+      - name: Build
+        run: |
+          cd kernel
+          make -j$(nproc) bzImage
+          make -j$(nproc) modules
+
+      - name: Package
+        run: |
+          cd kernel
+          mkdir -p output
+          cp arch/x86/boot/bzImage output/
+          make INSTALL_MOD_PATH=output modules_install
+          tar -czf kernel-rt-6.12.tar.gz -C output.
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-rt-6.12
+          path: kernel/kernel-rt-6.12.tar.gz
+          
+      - name: 打包上传内核+驱动模块压缩包
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag:  6.12-linux-rt压缩包
+          body: |
+            ====================🧊固件信息🧊=======================
+            ➦ 💻 固件平台：x86-64-linux
+            ➦ ⚽ 固件源码：https://cdn.kernel.org/ && https://github.com/torvalds/
+            ➦ 🚀 内核版本：${{ env.kernel_Version }}
+          artifacts: kernel/kernel-rt-6.12.tar.gz           
