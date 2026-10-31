@@ -1,0 +1,53 @@
+name: Build Linux Kernel
+
+on:
+  workflow_dispatch:  # 允许在 Actions 页面手动触发
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 安装构建依赖项
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses-dev bison flex libssl-dev libelf-dev bc
+
+      - name: 下载内核源码
+        run: |
+          # 以 6.12.115 为例，你可以替换成想要编译的版本号
+          wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.115.tar.xz
+          tar -xJf linux-6.12.115.tar.xz
+          cd linux-6.12.115
+
+      - name: 配置内核
+        working-directory: linux-6.12.115
+        run: |
+          # 使用当前运行器环境的默认配置，确保能启动基础环境
+          make defconfig
+
+      - name: 构建内核与模块
+        working-directory: linux-6.12.115
+        run: |
+          make -j$(nproc)
+
+      - name: 将模块安装至暂存目录
+        working-directory: linux-6.12.115
+        run: |
+          # 关键一步：把编译好的模块装到临时目录，而不是 /usr/lib/modules/
+          mkdir -p ${{ github.workspace }}/modules-staging
+          make INSTALL_MOD_PATH=${{ github.workspace }}/modules-staging modules_install
+
+      - name: 上传内核镜像
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-image
+          path: linux-6.12.115/arch/x86/boot/bzImage
+
+      - name: 上传内核模块
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-modules
+          path: ${{ github.workspace }}/modules-staging/lib/modules/
