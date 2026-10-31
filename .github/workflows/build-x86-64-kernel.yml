@@ -37,6 +37,9 @@ jobs:
         working-directory: linux-${{ env.kernel_Version }}
         run: |
           if [[ "${{ matrix.config_type }}" == "RT实时内核" ]]; then
+            # 使用当前运行器环境的默认配置，确保能启动基础环境
+            make defconfig
+            
             # 用脚本强制修改配置
             ./scripts/config --enable EXPERT
             ./scripts/config --disable PREEMPT_NONE
@@ -45,7 +48,7 @@ jobs:
             ./scripts/config --enable PREEMPT_RT
           
             # 自动处理依赖并应用
-            make defconfig
+            make olddefconfig
             
           else
             # 使用当前运行器环境的默认配置，确保能启动基础环境
@@ -74,7 +77,7 @@ jobs:
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
           
           cd ${{ github.workspace }}/modules-staging/lib/modules     
-          tar zcvfp ${{ env.FIRMWARE }}/modules.tar.gz .
+          sudo tar zcvfp ${{ env.FIRMWARE }}/modules.tar.gz .
 
       - name: 上传内核镜像
         uses: ncipollo/release-action@v1
