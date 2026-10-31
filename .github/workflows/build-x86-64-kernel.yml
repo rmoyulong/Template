@@ -68,9 +68,13 @@ jobs:
 
       - name: 打包内核模块
         run: |
-          cd ${{ github.workspace }}/modules-staging/lib/modules     
-          sudo tar zcvfp ../modules.tar.gz .
-          ls -lh
+            cd ${{ github.workspace }}/modules-staging/lib/modules
+            sudo rm -f build source vmlinux System.map
+            sudo find . \( -name "*.o" -o -name "*.cmd" -o -name ".tmp_*" \) -delete
+            sudo find . -name "*.ko" -exec strip --strip-debug {} \;
+            sudo find . -name "*.ko" -exec objcopy --remove-section .BTF {} \;
+            sudo tar zcf ../modules.tar.gz .
+            ls -lh ../modules.tar.gz
           
       - name: 上传内核镜像
         uses: ncipollo/release-action@v1
