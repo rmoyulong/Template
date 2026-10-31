@@ -111,14 +111,19 @@ jobs:
       - name: Create Release and upload
         uses: ncipollo/release-action@v1
         with:
+          allowUpdates: true
+          replacesArtifacts: true
           tag: rootfs-${{ env.DEBIAN_SUITE }}-${{ github.run_number }}
           name: RootFS ${{ env.DEBIAN_SUITE }} build ${{ github.run_number }}
+          artifacts: ${{ env.OUT_DIR }}/*
           body: |
             Debian ${{ env.DEBIAN_SUITE }} rootfs (x86_64)
             包含：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm
-
+            
             **初始 root 密码：`1234`**
             首次通过 SSH 登录会强制要求修改密码；FTP 需在改密后才能登录。
-            下载全部分片后还原：
-            cat rootfs.tar.gz.part-* > rootfs.tar.gz
-            sha256sum -c rootfs.tar.gz.sha256
+            若下载到的是 rootfs.tar.gz，直接解压：
+              tar -xzf rootfs.tar.gz -C /目标分区
+            若下载到的是 rootfs.tar.gz.part-* 分片，先合并：
+              cat rootfs.tar.gz.part-* > rootfs.tar.gz
+              sha256sum -c rootfs.tar.gz.sha256
