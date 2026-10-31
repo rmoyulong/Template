@@ -6,7 +6,7 @@ on:
         type: choice
         description: 选择源码分支
         required: true
-        default: "master"
+        default: "main"
         options:
         - master
         - main
@@ -62,7 +62,7 @@ jobs:
           #- xfce
           
     steps:
-      - uses: rmoyulong/armbian@master
+      - uses: rmoyulong/armbian@main
         with:
           armbian_token:    "${{ secrets.GITHUB_TOKEN }}"  # GitHub token
           armbian_release:    "${{ matrix.RELEASE }}"                        # userspace
