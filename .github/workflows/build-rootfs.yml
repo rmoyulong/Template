@@ -168,8 +168,8 @@ jobs:
         with:
           allowUpdates: true
           replacesArtifacts: true
-          tag: rootfs-${{ env.DEBIAN_SUITE }}-lastlet
-          name: rootfs-${{ env.DEBIAN_SUITE }}-lastlet
+          tag: rootfs-${{ env.DEBIAN_SUITE }}-latest
+          name: rootfs-${{ env.DEBIAN_SUITE }}-latest
           artifacts: ${{ env.OUT_DIR }}/*
           body: |
             Debian ${{ env.DEBIAN_SUITE }} rootfs (x86_64)
