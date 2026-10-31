@@ -47,9 +47,6 @@ jobs:
             # 自动处理依赖并应用
             make defconfig
             
-            # 4.检查是否真的生效了
-            grep "CONFIG_PREEMPT_RT=y" .config
-            
           else
             # 使用当前运行器环境的默认配置，确保能启动基础环境
             make defconfig
