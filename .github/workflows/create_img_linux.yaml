@@ -250,6 +250,6 @@ jobs:
             内核：${{ env.KERNEL_VERSION }}
             rootfs：Debian bookworm + SSH/FTP/Nginx/PHP8
             初始 root 密码：`1234`（首次 SSH 登录强制改密）
-            写入 U 盘：
+            写入 U 盘或者硬盘：
             gunzip -c debian-rootfs.img.gz | sudo dd of=/dev/sdX bs=4M status=progress
             sudo sync
