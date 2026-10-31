@@ -1,4 +1,4 @@
-name: Build RT Kernel 6.12
+name: 编译（j1800&&j1900）liunx 实时内核 6.12
 
 on:
   workflow_dispatch:
