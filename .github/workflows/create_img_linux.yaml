@@ -1,0 +1,205 @@
+name: Build Bootable IMG (rootfs + modules + bzImage)
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        description: 'Kernel version (must match modules/bzImage)'
+        required: false
+        default: '6.12.115-rt'
+  push:
+    tags:
+      - 'img-*'
+
+permissions:
+  contents: write
+
+env:
+  KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '6.12.115-rt' }}
+  IMG_SIZE_MB: 4096
+  WORK_DIR: ${{ github.workspace }}/work
+  IMG_FILE: ${{ github.workspace }}/work/debian-rootfs.img
+  ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-bookworm-6/rootfs.tar.gz
+  MODULES_URL: https://github.com/rmoyulong/Template/releases/download/kernel-modules-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8/modules.tar.gz
+  BZIMAGE_URL: https://github.com/rmoyulong/Template/releases/download/kernel-image-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8/bzImage
+
+jobs:
+  build-img:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget parted e2fsprogs dosfstools \
+            grub-pc-bin grub-efi-amd64-bin grub-common \
+            mtools xorriso rsync
+
+      - name: Download rootfs, modules, bzImage
+        run: |
+          mkdir -p "$WORK_DIR"
+          cd "$WORK_DIR"
+          wget -q -O rootfs.tar.gz "$ROOTFS_URL"
+          wget -q -O modules.tar.gz "$MODULES_URL"
+          wget -q -O bzImage "$BZIMAGE_URL"
+          ls -lh
+
+      - name: Create disk image and partitions
+        run: |
+          cd "$WORK_DIR"
+          # 创建 4GB 空镜像
+          dd if=/dev/zero of="$IMG_FILE" bs=1M count=$IMG_SIZE_MB status=progress
+
+          # 分区表：GPT，1=BIOS boot 2M，2=EFI 100M，3=root 剩余
+          parted -s "$IMG_FILE" mklabel gpt
+          parted -s "$IMG_FILE" mkpart biosboot 1MiB 3MiB
+          parted -s "$IMG_FILE" set 1 bios_grub on
+          parted -s "$IMG_FILE" mkpart efi fat32 3MiB 103MiB
+          parted -s "$IMG_FILE" set 2 esp on
+          parted -s "$IMG_FILE" mkpart root ext4 103MiB 100%
+
+          # 关联 loop 设备
+          LOOP=$(sudo losetup --find --show --partscan "$IMG_FILE")
+          echo "LOOP=$LOOP" >> "$GITHUB_ENV"
+          sleep 2
+          lsblk "$LOOP"
+
+          # 格式化
+          sudo mkfs.fat -F32 "${LOOP}p2"
+          sudo mkfs.ext4 -F -L rootfs "${LOOP}p3"
+
+      - name: Populate rootfs
+        run: |
+          LOOP="${{ env.LOOP }}"
+          sudo mkdir -p /mnt/rootfs /mnt/efi
+          sudo mount "${LOOP}p3" /mnt/rootfs
+          sudo mount "${LOOP}p2" /mnt/efi
+
+          # 解压 rootfs
+          sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner
+
+          # 解压 modules 到 lib/modules
+          sudo mkdir -p /mnt/rootfs/lib/modules
+          sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /mnt/rootfs/lib/modules --numeric-owner
+
+          # 放置内核
+          sudo mkdir -p /mnt/rootfs/boot
+          sudo cp "$WORK_DIR/bzImage" "/mnt/rootfs/boot/vmlinuz-${KERNEL_VERSION}"
+
+          # 修正 lib/modules 目录结构（有些包解压后多一层 lib/modules）
+          if [ -d "/mnt/rootfs/lib/modules/lib/modules" ]; then
+            sudo rsync -a /mnt/rootfs/lib/modules/lib/modules/ /mnt/rootfs/lib/modules/
+            sudo rm -rf /mnt/rootfs/lib/modules/lib
+          fi
+
+          # 确认模块目录存在
+          ls -d /mnt/rootfs/lib/modules/* || true
+
+      - name: Generate initramfs and install GRUB (chroot)
+        run: |
+          LOOP="${{ env.LOOP }}"
+          # 准备 chroot 挂载
+          sudo mount --bind /dev  /mnt/rootfs/dev
+          sudo mount --bind /proc /mnt/rootfs/proc
+          sudo mount --bind /sys  /mnt/rootfs/sys
+
+          # 确保 initramfs-tools 存在
+          if [ ! -x /mnt/rootfs/usr/sbin/update-initramfs ]; then
+            echo "ERROR: initramfs-tools not found in rootfs. Please rebuild rootfs with initramfs-tools included."
+            exit 1
+          fi
+
+          # 生成 initramfs（在 chroot 内）
+          sudo chroot /mnt/rootfs /bin/bash -c "update-initramfs -c -k ${KERNEL_VERSION} || true"
+
+          # 如果 update-initramfs 因版本不匹配失败，尝试用 uname 风格的目录名
+          if [ ! -f "/mnt/rootfs/boot/initrd.img-${KERNEL_VERSION}" ]; then
+            echo "initramfs generation failed, attempting fallback..."
+            sudo chroot /mnt/rootfs /bin/bash -c "depmod -a ${KERNEL_VERSION} && update-initramfs -c -k ${KERNEL_VERSION}"
+          fi
+
+          # 写 fstab
+          sudo tee /mnt/rootfs/etc/fstab > /dev/null <<'EOF'
+          # <file system> <mount point> <type> <options> <dump> <pass>
+          /dev/sda3  /      ext4  errors=remount-ro  0  1
+          /dev/sda2  /boot/efi  vfat  umask=0077  0  1
+          EOF
+
+          # 安装 GRUB 到镜像（BIOS + EFI）
+          sudo chroot /mnt/rootfs /bin/bash -c "
+            apt-get update || true
+            apt-get install -y grub-pc grub-efi-amd64 || true
+            grub-install --target=i386-pc --recheck ${LOOP} || true
+            grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true
+            update-grub || true
+          "
+
+          # 如果 chroot 内 grub-install 失败，用宿主机的 grub 工具直接安装
+          if [ ! -d /mnt/rootfs/boot/grub ]; then
+            echo "chroot grub-install failed, trying host grub..."
+            sudo grub-install --target=i386-pc --boot-directory=/mnt/rootfs/boot "${LOOP}" || true
+          fi
+
+          # 手动写 grub.cfg，确保内核和 initrd 路径正确
+          sudo mkdir -p /mnt/rootfs/boot/grub
+          sudo tee /mnt/rootfs/boot/grub/grub.cfg > /dev/null <<EOF
+          set default=0
+          set timeout=5
+
+          menuentry "Debian ${KERNEL_VERSION}" {
+              linux /boot/vmlinuz-${KERNEL_VERSION} root=/dev/sda3 rw quiet
+              initrd /boot/initrd.img-${KERNEL_VERSION}
+          }
+
+          menuentry "Debian ${KERNEL_VERSION} (recovery)" {
+              linux /boot/vmlinuz-${KERNEL_VERSION} root=/dev/sda3 rw single
+              initrd /boot/initrd.img-${KERNEL_VERSION}
+          }
+          EOF
+
+          # 卸载 chroot 挂载
+          sudo umount /mnt/rootfs/dev  || true
+          sudo umount /mnt/rootfs/proc || true
+          sudo umount /mnt/rootfs/sys  || true
+
+      - name: Cleanup and unmount
+        run: |
+          LOOP="${{ env.LOOP }}"
+          sudo umount /mnt/rootfs || true
+          sudo umount /mnt/efi || true
+          sudo losetup -d "$LOOP" || true
+
+      - name: Compress image
+        run: |
+          cd "$WORK_DIR"
+          # 压缩为 .img.gz
+          gzip -9 -k "$IMG_FILE"
+          ls -lh
+          ( cd "$WORK_DIR" && sha256sum debian-rootfs.img.gz > debian-rootfs.img.gz.sha256 )
+
+      - name: Create Release and upload
+        uses: ncipollo/release-action@v1
+        with:
+          tag: img-debian-${{ env.KERNEL_VERSION }}-${{ github.run_number }}
+          name: Bootable IMG ${{ env.KERNEL_VERSION }} build ${{ github.run_number }}
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: ${{ env.WORK_DIR }}/*
+          body: |
+            可启动 Debian IMG（x86_64）
+            内核：${{ env.KERNEL_VERSION }}
+            rootfs：Debian bookworm + SSH/FTP/Nginx/PHP8
+            初始 root 密码：`1234`（首次 SSH 登录强制改密）
+            写入 U 盘：
+            gunzip -c debian-rootfs.img.gz | sudo dd of=/dev/sdX bs=4M status=progress
+            sudo sync
