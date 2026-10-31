@@ -37,7 +37,16 @@ jobs:
       - name: Install debootstrap
         run: |
           sudo apt-get update
-          sudo apt-get install -y debootstrap debian-archive-keyring
+          sudo apt-get install -y debootstrap debian-archive-keyring gnupg
+
+      - name: Ensure bookworm archive key present
+        run: |
+          if ! gpg --show-keys --with-fingerprint /usr/share/keyrings/debian-archive-keyring.gpg 2>/dev/null | grep -q "F8D2 585B 8783 D481"; then
+            sudo gpg --no-default-keyring \
+                     --keyring /usr/share/keyrings/debian-archive-keyring.gpg \
+                     --keyserver keyserver.ubuntu.com \
+                     --recv-keys 4D64FEC119C2029067D6E791F8D2585B8783D481
+          fi
 
       - name: Debootstrap base system
         run: |
