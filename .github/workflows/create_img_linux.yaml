@@ -6,7 +6,7 @@ on:
       kernel_version:
         description: 'Kernel version (must match modules/bzImage)'
         required: false
-        default: '6.12.115-rt'
+        default: '6.12.115'
   push:
     tags:
       - 'img-*'
@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '6.12.115-rt' }}
+  KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '6.12.115' }}
   IMG_SIZE_MB: 4096
   WORK_DIR: ${{ github.workspace }}/work
   IMG_FILE: ${{ github.workspace }}/work/debian-rootfs.img
@@ -84,18 +84,22 @@ jobs:
           # 解压 rootfs
           sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner
 
-          # 解压 modules 到临时目录，自动定位版本目录
+          # 解压 modules 到临时目录
           rm -rf /tmp/modules-extract
           mkdir -p /tmp/modules-extract
           sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /tmp/modules-extract
 
-          echo "=== modules.tar.gz 解压后的目录结构 ==="
-          sudo find /tmp/modules-extract -maxdepth 4 -type d | head -30
+          echo "=== modules.tar.gz 解压后的顶层目录 ==="
+          sudo find /tmp/modules-extract -maxdepth 1 -mindepth 1
 
-          VERSION_DIR=$(sudo find /tmp/modules-extract -maxdepth 4 -type d -name "${KERNEL_VERSION}" | head -1)
+          # 检查 bzImage 内部版本字符串，辅助确认 KERNEL_VERSION 是否匹配
+          echo "=== bzImage 内部版本字符串 ==="
+          strings "$WORK_DIR/bzImage" | grep -m1 -o '6\.12\.[0-9]*[^ ]*' || true
+
+          VERSION_DIR=$(sudo find /tmp/modules-extract -maxdepth 4 -type d -name "${KERNEL_VERSION}" -print -quit)
           if [ -z "$VERSION_DIR" ]; then
             echo "ERROR: 在 modules.tar.gz 中找不到 ${KERNEL_VERSION} 目录"
-            sudo find /tmp/modules-extract -maxdepth 5 -type d
+            sudo find /tmp/modules-extract -maxdepth 2 -type d
             exit 1
           fi
           echo "找到模块目录: $VERSION_DIR"
@@ -108,7 +112,6 @@ jobs:
           sudo mkdir -p /mnt/rootfs/boot
           sudo cp "$WORK_DIR/bzImage" "/mnt/rootfs/boot/vmlinuz-${KERNEL_VERSION}"
 
-          # 确认目录结构
           echo "=== /mnt/rootfs/lib/modules 内容 ==="
           ls -la /mnt/rootfs/lib/modules/
           echo "=== /mnt/rootfs/boot 内容 ==="
