@@ -1,15 +1,18 @@
-name: 编译 RootFS (Debian + SSH/FTP/Nginx/PHP8)
+name: 编译RootFS(Debian+Netplan+SSH/FTP/Nginx/PHP8)
 
 on:
   workflow_dispatch:
     inputs:
       debian_suite:
-        description: 'Debian suite (bookworm = PHP 8.2)'
+        description: 'Debian 套件(bookworm = PHP 8.2)'
         required: false
         default: 'bookworm'
   push:
     tags:
       - 'rootfs-*'
+
+permissions:
+  contents: write
 
 env:
   DEBIAN_SUITE: ${{ github.event.inputs.debian_suite || 'bookworm' }}
@@ -42,9 +45,39 @@ jobs:
           sudo debootstrap \
             --arch=amd64 \
             --variant=minbase \
-            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget \
+            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-networkd,systemd-resolved,ifupdown \
             "$DEBIAN_SUITE" "$ROOTFS_DIR" \
             http://deb.debian.org/debian/
+
+      - name: Configure APT sources
+        run: |
+          sudo tee "$ROOTFS_DIR/etc/apt/sources.list" > /dev/null <<EOF
+          deb http://deb.debian.org/debian ${DEBIAN_SUITE} main contrib non-free non-free-firmware
+          deb http://deb.debian.org/debian ${DEBIAN_SUITE}-updates main contrib non-free non-free-firmware
+          deb http://security.debian.org/debian-security ${DEBIAN_SUITE}-security main contrib non-free non-free-firmware
+          EOF
+
+      - name: Configure netplan (DHCP dynamic IP)
+        run: |
+          # 禁用可预测网卡名，统一使用 eth0，避免 netplan 匹配不上
+          sudo mkdir -p "$ROOTFS_DIR/etc/systemd/network"
+          sudo ln -sf /dev/null "$ROOTFS_DIR/etc/systemd/network/99-default.link"
+
+          # netplan 配置：DHCP 动态获取 IPv4
+          sudo mkdir -p "$ROOTFS_DIR/etc/netplan"
+          sudo tee "$ROOTFS_DIR/etc/netplan/01-netcfg.yaml" > /dev/null <<'EOF'
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              eth0:
+                dhcp4: true
+                dhcp6: false
+                optional: true
+          EOF
+
+          # netplan 要求配置文件权限为 600
+          sudo chmod 600 "$ROOTFS_DIR/etc/netplan/01-netcfg.yaml"
 
       - name: Configure rootfs (chroot)
         run: |
@@ -52,6 +85,9 @@ jobs:
           sudo mount --bind /dev  "$ROOTFS_DIR/dev"
           sudo mount --bind /proc "$ROOTFS_DIR/proc"
           sudo mount --bind /sys  "$ROOTFS_DIR/sys"
+
+          # 让 resolv.conf 由 systemd-resolved 接管（DHCP 下发的 DNS 才会生效）
+          sudo ln -sf /run/systemd/resolve/stub-resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
 
           # 初始密码 1234，并强制首次登录修改
           echo "root:1234" | sudo chroot "$ROOTFS_DIR" /usr/sbin/chpasswd
@@ -70,8 +106,17 @@ jobs:
           sudo sed -i 's/^;*cgi.fix_pathinfo.*/cgi.fix_pathinfo=1/' \
             "$ROOTFS_DIR/etc/php/8.2/cgi/php.ini" || true
 
-          # 启用 nginx + php-fpm 开机自启
+          # 启用服务开机自启
+          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-networkd            || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-networkd-wait-online || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-resolved            || true
           sudo chroot "$ROOTFS_DIR" systemctl enable nginx php8.2-fpm ssh vsftpd || true
+
+          # 首次开机生成 netplan 后端配置（可选，保险起见）
+          sudo chroot "$ROOTFS_DIR" netplan generate || true
+
+          # 验证 apt 可用（模拟安装，不实际改动）
+          sudo chroot "$ROOTFS_DIR" bash -c "apt-get update && apt-get -s install -y curl >/dev/null" || true
 
           # 清理 apt 缓存
           sudo chroot "$ROOTFS_DIR" apt-get clean
@@ -101,12 +146,10 @@ jobs:
             ls -lh
           fi
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: rootfs-${{ env.DEBIAN_SUITE }}
-          path: ${{ env.OUT_DIR }}/*
-          retention-days: 30
+      - name: Verify output files
+        run: |
+          ls -lh "$OUT_DIR"
+          test -f "$OUT_DIR/rootfs.tar.gz" || test -f "$OUT_DIR/rootfs.tar.gz.part-aa"
 
       - name: Create Release and upload
         uses: ncipollo/release-action@v1
