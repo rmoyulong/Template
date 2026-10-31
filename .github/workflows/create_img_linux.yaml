@@ -251,5 +251,24 @@ jobs:
             rootfs：Debian bookworm + SSH/FTP/Nginx/PHP8
             初始 root 密码：`1234`（首次 SSH 登录强制改密）
             写入 U 盘或者硬盘：
-            gunzip -c debian-rootfs.img.gz | sudo dd of=/dev/sdX bs=4M status=progress
+            # 先确认设备（X 是目标盘，如 sdb）
+            lsblk -o NAME,SIZE,MODEL,TRAN,MOUNTPOINT
+            # 确认后卸载该盘所有分区（把 sdX 换成实际盘符）
+            sudo umount /dev/sdX?* 2>/dev/null || true
+            # 写入
+            gunzip -c debian-rootfs.img.gz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
             sudo sync
+            在安装好的机器上扩展目标硬盘空间
+            # 查看根分区设备
+            findmnt /
+            # 假设输出 /dev/sda3，整盘是 /dev/sda，分区号是 3
+            sudo growpart /dev/sda 3
+            sudo resize2fs /dev/sda3
+            
+            或者写一个bash处理文件：
+            sudo apt install -y cloud-guest-utils   # 提供 growpart
+            ROOT_PART=$(findmnt -n -o SOURCE /)
+            ROOT_DISK=$(lsblk -no PKNAME "$ROOT_PART")
+            PART_NUM=$(cat /sys/class/block/$(basename "$ROOT_PART")/partition)
+            sudo growpart "/dev/$ROOT_DISK" "$PART_NUM"
+            sudo resize2fs "$ROOT_PART"            
