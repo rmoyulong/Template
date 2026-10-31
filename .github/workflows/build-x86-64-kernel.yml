@@ -77,8 +77,11 @@ jobs:
           echo "FIRMWARE=$PWD" >> $GITHUB_ENV
           
           cd ${{ github.workspace }}/modules-staging/lib/modules     
-          sudo tar zcvfp ${{ env.FIRMWARE }}/modules.tar.gz .
-
+          sudo tar zcvfp ../modules.tar.gz .
+          cd ${{ env.FIRMWARE }}
+          cp ${{ github.workspace }}/modules-staging/lib/*.gz .
+          ls -lh
+          
       - name: 上传内核镜像
         uses: ncipollo/release-action@v1
         with:
@@ -103,4 +106,4 @@ jobs:
             ➦ 💻 固件平台：x86-64-linux
             ➦ ⚽ 固件源码：https://cdn.kernel.org/
             ➦ 🚀 内核版本：${{ env.kernel_Version }}
-          artifacts: ${{ env.FIRMWARE }}/*         
+          artifacts: ${{ env.FIRMWARE }}/*        
