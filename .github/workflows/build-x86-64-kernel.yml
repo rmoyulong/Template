@@ -3,6 +3,9 @@ name: 构建 Linux 内核 - x86_64
 on:
   workflow_dispatch:  # 允许在 Actions 页面手动触发
 
+env:
+  kernel_Version: 6.12.115
+  
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -17,26 +20,28 @@ jobs:
 
       - name: 下载内核源码
         run: |
-          # 以 6.12.115 为例，你可以替换成想要编译的版本号
-          wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.115.tar.xz
-          tar -xJf linux-6.12.115.tar.xz
-          cd linux-6.12.115
+          # 以 ${{ env.kernel_Version }} 为例，你可以替换成想要编译的版本号
+          wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{ env.kernel_Version }}.tar.xz
+          tar -xJf linux-${{ env.kernel_Version }}.tar.xz
+          cd linux-${{ env.kernel_Version }}
 
       - name: 配置内核
-        working-directory: linux-6.12.115
+        working-directory: linux-${{ env.kernel_Version }}
         run: |
           # 使用当前运行器环境的默认配置，确保能启动基础环境
           make defconfig
 
       - name: 构建内核与模块
-        working-directory: linux-6.12.115
+        working-directory: linux-${{ env.kernel_Version }}
         run: |
           make -j$(nproc)
 
       - name: 将模块安装至暂存目录
-        working-directory: linux-6.12.115
+        working-directory: linux-${{ env.kernel_Version }}
         run: |
           # 关键一步：把编译好的模块装到临时目录，而不是 /usr/lib/modules/
+          
+          #/usr/lib/modules/6.12.114，任务一结束就没了，你也拿不到。所以必须用 INSTALL_MOD_PATH 指定一个工作区内的临时路径modules-staging
           mkdir -p ${{ github.workspace }}/modules-staging
           make INSTALL_MOD_PATH=${{ github.workspace }}/modules-staging modules_install
 
@@ -44,7 +49,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kernel-image
-          path: linux-6.12.115/arch/x86/boot/bzImage
+          path: linux-${{ env.kernel_Version }}/arch/x86/boot/bzImage
 
       - name: 上传内核模块
         uses: actions/upload-artifact@v4
