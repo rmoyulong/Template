@@ -1,0 +1,124 @@
+name: 编译 RootFS (Debian + SSH/FTP/Nginx/PHP8)
+
+on:
+  workflow_dispatch:
+    inputs:
+      debian_suite:
+        description: 'Debian suite (bookworm = PHP 8.2)'
+        required: false
+        default: 'bookworm'
+  push:
+    tags:
+      - 'rootfs-*'
+
+env:
+  DEBIAN_SUITE: ${{ github.event.inputs.debian_suite || 'bookworm' }}
+  ROOTFS_DIR: ${{ github.workspace }}/rootfs
+  OUT_DIR: ${{ github.workspace }}/out
+
+jobs:
+  build-rootfs:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # GitHub 免费 runner 磁盘约 14GB，先腾空间
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h
+
+      - name: Install debootstrap
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y debootstrap
+
+      - name: Debootstrap base system
+        run: |
+          sudo mkdir -p "$ROOTFS_DIR"
+          sudo debootstrap \
+            --arch=amd64 \
+            --variant=minbase \
+            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget \
+            "$DEBIAN_SUITE" "$ROOTFS_DIR" \
+            http://deb.debian.org/debian/
+
+      - name: Configure rootfs (chroot)
+        run: |
+          # 准备 chroot 所需挂载
+          sudo mount --bind /dev  "$ROOTFS_DIR/dev"
+          sudo mount --bind /proc "$ROOTFS_DIR/proc"
+          sudo mount --bind /sys  "$ROOTFS_DIR/sys"
+
+          # 初始密码 1234，并强制首次登录修改
+          echo "root:1234" | sudo chroot "$ROOTFS_DIR" /usr/sbin/chpasswd
+          sudo chroot "$ROOTFS_DIR" chage -d 0 root
+
+          # 允许 root SSH 登录（首次登录会强制改密）
+          sudo sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' \
+            "$ROOTFS_DIR/etc/ssh/sshd_config"
+
+          # vsftpd：允许本地用户登录并上传
+          # 注意：密码过期期间 FTP 会拒绝登录，需先通过 SSH 改密
+          echo "local_enable=YES"  | sudo tee -a "$ROOTFS_DIR/etc/vsftpd.conf"
+          echo "write_enable=YES"  | sudo tee -a "$ROOTFS_DIR/etc/vsftpd.conf"
+
+          # PHP CGI 路径修复
+          sudo sed -i 's/^;*cgi.fix_pathinfo.*/cgi.fix_pathinfo=1/' \
+            "$ROOTFS_DIR/etc/php/8.2/cgi/php.ini" || true
+
+          # 启用 nginx + php-fpm 开机自启
+          sudo chroot "$ROOTFS_DIR" systemctl enable nginx php8.2-fpm ssh vsftpd || true
+
+          # 清理 apt 缓存
+          sudo chroot "$ROOTFS_DIR" apt-get clean
+          sudo rm -rf "$ROOTFS_DIR/var/lib/apt/lists/"*
+
+          # 卸载挂载点
+          sudo umount "$ROOTFS_DIR/dev"  || true
+          sudo umount "$ROOTFS_DIR/proc" || true
+          sudo umount "$ROOTFS_DIR/sys"  || true
+
+      - name: Package rootfs
+        run: |
+          mkdir -p "$OUT_DIR"
+          sudo tar --numeric-owner -zcf "$OUT_DIR/rootfs.tar.gz" -C "$ROOTFS_DIR" .
+          ls -lh "$OUT_DIR/rootfs.tar.gz"
+
+          # 生成校验文件
+          ( cd "$OUT_DIR" && sha256sum rootfs.tar.gz > rootfs.tar.gz.sha256 )
+
+          # 若超过 1.9GB，拆分成多个小于 2GB 的分片
+          SIZE=$(stat -c%s "$OUT_DIR/rootfs.tar.gz")
+          LIMIT=$((1900 * 1024 * 1024))
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            cd "$OUT_DIR"
+            split -b 1900m rootfs.tar.gz rootfs.tar.gz.part-
+            rm -f rootfs.tar.gz
+            ls -lh
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rootfs-${{ env.DEBIAN_SUITE }}
+          path: ${{ env.OUT_DIR }}/*
+          retention-days: 30
+
+      - name: Create Release and upload
+        uses: ncipollo/release-action@v1
+        with:
+          tag: rootfs-${{ env.DEBIAN_SUITE }}-${{ github.run_number }}
+          name: RootFS ${{ env.DEBIAN_SUITE }} build ${{ github.run_number }}
+          body: |
+            Debian ${{ env.DEBIAN_SUITE }} rootfs (x86_64)
+            包含：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm
+
+            **初始 root 密码：`1234`**
+            首次通过 SSH 登录会强制要求修改密码；FTP 需在改密后才能登录。
+            下载全部分片后还原：
+            cat rootfs.tar.gz.part-* > rootfs.tar.gz
+            sha256sum -c rootfs.tar.gz.sha256
