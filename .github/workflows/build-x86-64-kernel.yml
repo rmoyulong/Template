@@ -1,4 +1,4 @@
-name: Build Linux Kernel
+name: 构建 Linux 内核 - x86_64
 
 on:
   workflow_dispatch:  # 允许在 Actions 页面手动触发
