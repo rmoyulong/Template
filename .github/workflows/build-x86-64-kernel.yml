@@ -37,22 +37,88 @@ jobs:
         working-directory: linux-${{ env.kernel_Version }}
         run: |
           if [[ "${{ matrix.config_type }}" == "RT实时内核" ]]; then
-            # 使用当前运行器环境的默认配置，确保能启动基础环境
+            # 1. 生成基础配置（这已经是一个能启动的、功能较全的 x86_64 配置）
             make defconfig
-            
-            # 用脚本强制修改配置
+        
+            # 2. 启用实时内核（关键依赖：EXPERT 和关闭其他抢占模型）
             ./scripts/config --enable EXPERT
             ./scripts/config --disable PREEMPT_NONE
             ./scripts/config --disable PREEMPT_VOLUNTARY
             ./scripts/config --enable PREEMPTION
             ./scripts/config --enable PREEMPT_RT
-          
-            # 自动处理依赖并应用
+        
+            # 3. 启用模块压缩（和 Daphile 一样，减小体积）
+            ./scripts/config --enable MODULE_COMPRESS
+            ./scripts/config --enable MODULE_COMPRESS_XZ
+        
+            # 4. 确保关键音频驱动以模块形式编译（defconfig 通常已包含，但显式确认更稳妥）
+            ./scripts/config --module SND_USB_AUDIO
+            ./scripts/config --module SND_HDA_INTEL
+        
+            # 蓝牙核心与 USB 传输
+            ./scripts/config --module BT
+            ./scripts/config --module BT_HCIBTUSB
+            ./scripts/config --module BT_HCIUART
+            
+            # Wi-Fi 通用栈
+            ./scripts/config --module CFG80211
+            ./scripts/config --module MAC80211
+            
+            # 常见 Wi-Fi 网卡（按需保留，编译时间会增加）
+            ./scripts/config --module IWLWIFI
+            ./scripts/config --module IWLMVM
+            ./scripts/config --module RTL8XXXU
+            ./scripts/config --module RTW88
+            ./scripts/config --module RTW89
+            ./scripts/config --module ATH9K
+            ./scripts/config --module ATH10K
+            ./scripts/config --module BRCMFMAC
+            ./scripts/config --module MT76_CORE    
+        
+            # 5. 让内核自动处理所有依赖关系
             make olddefconfig
             
           else
-            # 使用当前运行器环境的默认配置，确保能启动基础环境
+            # 1. 生成基础配置（这已经是一个能启动的、功能较全的 x86_64 配置）
             make defconfig
+        
+            # 2. 启用实时内核（关键依赖：EXPERT 和关闭其他抢占模型）
+            ./scripts/config --enable EXPERT
+            ./scripts/config --disable PREEMPT_NONE
+            ./scripts/config --disable PREEMPT_VOLUNTARY
+            ./scripts/config --enable PREEMPTION
+            #./scripts/config --enable PREEMPT_RT
+        
+            # 3. 启用模块压缩（和 Daphile 一样，减小体积）
+            ./scripts/config --enable MODULE_COMPRESS
+            ./scripts/config --enable MODULE_COMPRESS_XZ
+        
+            # 4. 确保关键音频驱动以模块形式编译（defconfig 通常已包含，但显式确认更稳妥）
+            ./scripts/config --module SND_USB_AUDIO
+            ./scripts/config --module SND_HDA_INTEL
+        
+            # 蓝牙核心与 USB 传输
+            ./scripts/config --module BT
+            ./scripts/config --module BT_HCIBTUSB
+            ./scripts/config --module BT_HCIUART
+            
+            # Wi-Fi 通用栈
+            ./scripts/config --module CFG80211
+            ./scripts/config --module MAC80211
+            
+            # 常见 Wi-Fi 网卡（按需保留，编译时间会增加）
+            ./scripts/config --module IWLWIFI
+            ./scripts/config --module IWLMVM
+            ./scripts/config --module RTL8XXXU
+            ./scripts/config --module RTW88
+            ./scripts/config --module RTW89
+            ./scripts/config --module ATH9K
+            ./scripts/config --module ATH10K
+            ./scripts/config --module BRCMFMAC
+            ./scripts/config --module MT76_CORE    
+        
+            # 5. 让内核自动处理所有依赖关系
+            make olddefconfig
           fi        
           
 
