@@ -67,14 +67,35 @@ jobs:
           mkdir -p ${{ github.workspace }}/modules-staging
           make INSTALL_MOD_PATH=${{ github.workspace }}/modules-staging modules_install
 
+      - name: 打包内核模块
+        run: |
+          mkdir -p ${{ github.workspace }}/output
+          
+          cd ${{ github.workspace }}/modules-staging/lib/modules     
+          tar zcvfp ${{ github.workspace }}/output/modules.tar.gz .
+
       - name: 上传内核镜像
-        uses: actions/upload-artifact@v4
+        uses: ncipollo/release-action@v1
         with:
-          name: kernel-image-${{ matrix.config_type }}
-          path: linux-${{ env.kernel_Version }}/arch/x86/boot/bzImage
+          allowUpdates: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag:  kernel-image-${{ matrix.config_type }}
+          body: |
+            ====================🧊固件信息🧊=======================
+            ➦ 💻 固件平台：x86-64-linux
+            ➦ ⚽ 固件源码：https://cdn.kernel.org/
+            ➦ 🚀 内核版本：${{ env.kernel_Version }}
+          artifacts: linux-${{ env.kernel_Version }}/arch/x86/boot/bzImage
 
       - name: 上传内核模块
-        uses: actions/upload-artifact@v4
+        uses: ncipollo/release-action@v1
         with:
-          name: kernel-modules-${{ matrix.config_type }}
-          path: ${{ github.workspace }}/modules-staging/lib/modules/
+          allowUpdates: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag:  kernel-modules-${{ matrix.config_type }}
+          body: |
+            ====================🧊固件信息🧊=======================
+            ➦ 💻 固件平台：x86-64-linux
+            ➦ ⚽ 固件源码：https://cdn.kernel.org/
+            ➦ 🚀 内核版本：${{ env.kernel_Version }}
+          artifacts: ${{ github.workspace }}/output          
