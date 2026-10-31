@@ -19,7 +19,7 @@ env:
   IMG_SIZE_MB: 4096
   WORK_DIR: ${{ github.workspace }}/work
   IMG_FILE: ${{ github.workspace }}/work/debian-rootfs.img
-  ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-bookworm-6/rootfs.tar.gz
+  ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-bookworm-7/rootfs.tar.gz
   MODULES_URL: https://github.com/rmoyulong/Template/releases/download/kernel-modules-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8/modules.tar.gz
   BZIMAGE_URL: https://github.com/rmoyulong/Template/releases/download/kernel-image-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8/bzImage
 
