@@ -85,7 +85,7 @@ jobs:
           sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner
           
           # 放入把系统安装到硬盘的脚本
-          INSTALLER_SRC="/home/runner/work/Template/Template/patch/install.sh"
+          INSTALLER_SRC="${{ github.workspace }}/patch/install.sh"
           if [ ! -f "$INSTALLER_SRC" ]; then
             echo "ERROR: $INSTALLER_SRC 不存在"
             exit 1
