@@ -256,8 +256,8 @@ jobs:
       - name: Create Release and upload
         uses: ncipollo/release-action@v1
         with:
-          tag: img-debian-${{ env.KERNEL_VERSION }}-${{ github.run_number }}
-          name: Bootable IMG ${{ env.KERNEL_VERSION }} build ${{ github.run_number }}
+          tag: image-debian-latest
+          name: image-debian-latest
           allowUpdates: true
           replacesArtifacts: true
           artifacts: ${{ env.WORK_DIR }}/*.img.gz*
