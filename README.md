@@ -6,5 +6,7 @@
 例子3：使用https://www.kernel.org/ 编译j1900&j1800卡刷debian固件<br>
 GPT与MBR镜像启动兼容性对比清单<br>
 这份清单结合老主板实测场景整理，能帮你快速判断不同硬件该选哪一个镜像版本，避免启动失败。<br>
-<a href="MBR与GPT镜像兼容性对照.html">MBR 与 GPT 镜像启动兼容性对照表</a>
+[MBR 与 GPT 镜像启动兼容性对照表](MBR与GPT镜像兼容性对照.html)
+
+[MBR 与 GPT 镜像启动兼容性对照表（在线预览）](https://rmoyulong.github.io/Template/MBR与GPT镜像兼容性对照.html){target="_blank"}
 
