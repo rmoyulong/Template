@@ -136,9 +136,12 @@ jobs:
           sudo chroot /mnt/rootfs /bin/bash -c "
             export DEBIAN_FRONTEND=noninteractive
             apt-get update || true
-            apt-get install -y grub-pc grub-efi-amd64 grub-efi-ia32 \
+            apt-get install -y --no-install-recommends \
+              grub-pc grub-efi-amd64 grub-efi-ia32 \
               parted dosfstools e2fsprogs rsync \
               fake-hwclock systemd-timesyncd || true
+            apt-get clean && rm -rf /var/lib/apt/lists/*
+
             
             # BIOS 模式：写入 MBR，加--force强制写入loop设备，避免跳过
             grub-install --target=i386-pc --recheck --force $LOOP || true
