@@ -179,6 +179,7 @@ jobs:
           echo "=== 安装 GRUB 软件包 ==="
           sudo chroot /mnt/rootfs /bin/bash -c "
             export DEBIAN_FRONTEND=noninteractive
+            export DEBCONF_NONINTERACTIVE_SEEN=true
             apt-get update || true
             apt-get install -y --no-install-recommends \
               grub-pc grub-efi-amd64 grub-efi-ia32 \
