@@ -1,9 +1,4 @@
 name: 编译Bootable IMG (MBR兼容版)-MBR
-### 这次的区别：
-#1. **分区表用 MBR**：老 BIOS 能识别。
-#2. **两个分区**：`p1` 是 FAT32（给主板认 EFI 文件用），`p2` 是 EXT4（用来装 rootfs，解决所有的解压报错）。
-#3. **GRUB 写入**：BIOS 写 MBR，32 位和 64 位 UEFI 写入 FAT32 分区，并额外复制一份改名为 `BOOTIA32.EFI` 放在 `EFI/BOOT/` 兜底。
-#这个方案既能启动 Linux，又照顾了 Bay Trail 老主板。
 on:
   workflow_dispatch:
   push:
@@ -69,6 +64,10 @@ jobs:
 
           sudo mkfs.vfat -F32 "${LOOP}p1"
           sudo mkfs.ext4 -F -L rootfs "${LOOP}p2"
+          
+          # 提前导出根分区UUID，后续直接写入grub.cfg做兜底
+          ROOTFS_UUID=$(sudo blkid -s UUID -o value "${LOOP}p2")
+          echo "ROOTFS_UUID=$ROOTFS_UUID" >> "$GITHUB_ENV"
 
       - name: Populate rootfs
         run: |
@@ -104,9 +103,16 @@ jobs:
       - name: Generate initramfs and install GRUB
         run: |
           LOOP="${{ env.LOOP }}"
+          ROOTFS_UUID="${{ env.ROOTFS_UUID }}"
+          
+          # 提前在rootfs内创建必要的挂载点，避免chroot内挂载冲突
+          sudo mkdir -p /mnt/rootfs/dev /mnt/rootfs/proc /mnt/rootfs/sys /mnt/rootfs/boot/efi
+          
           sudo mount --bind /dev /mnt/rootfs/dev
           sudo mount --bind /proc /mnt/rootfs/proc
           sudo mount --bind /sys /mnt/rootfs/sys
+          # 直接把外部已挂载的EFI分区bind进chroot，避免重复挂载
+          sudo mount --bind /mnt/efi /mnt/rootfs/boot/efi
 
           # 伪造 config 以生成 initramfs
           sudo tee "/mnt/rootfs/boot/config-${KERNEL_VERSION}" > /dev/null <<'EOF'
@@ -117,23 +123,22 @@ jobs:
           sudo chroot /mnt/rootfs /bin/bash -c "depmod -a ${KERNEL_VERSION}"
           sudo chroot /mnt/rootfs /bin/bash -c "update-initramfs -c -k ${KERNEL_VERSION}"
 
-          # fstab
-          sudo tee /mnt/rootfs/etc/fstab > /dev/null <<'EOF'
+          # fstab 同时写入LABEL和UUID，双重兜底
+          sudo tee /mnt/rootfs/etc/fstab > /dev/null <<EOF
           LABEL=rootfs  /  ext4  errors=remount-ro  0  1
+          UUID=$ROOTFS_UUID  /  ext4  errors=remount-ro  0  1
           EOF
 
-          # 安装 GRUB
+          # 安装 GRUB，全程避免重复挂载冲突
           sudo chroot /mnt/rootfs /bin/bash -c "
             export DEBIAN_FRONTEND=noninteractive
             apt-get update || true
             apt-get install -y grub-pc grub-efi-amd64 grub-efi-ia32 || true
             
-            # BIOS 模式：写入 MBR
-            grub-install --target=i386-pc --recheck ${LOOP} || true
+            # BIOS 模式：写入 MBR，加--force强制写入loop设备，避免跳过
+            grub-install --target=i386-pc --recheck --force $LOOP || true
             
-            # UEFI 模式：写入 p1 分区 (挂载在 /boot/efi)
-            mkdir -p /boot/efi
-            mount ${LOOP}p1 /boot/efi
+            # UEFI 模式：直接用已bind好的/boot/efi，不再重复mount
             grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true
             grub-install --target=i386-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true
           "
@@ -147,22 +152,24 @@ jobs:
             sudo cp /mnt/efi/EFI/debian/grubx64.efi /mnt/efi/EFI/BOOT/BOOTX64.EFI
           fi
 
-          # 写 grub.cfg
+          # 写 grub.cfg，同时加入LABEL和UUID双根参数，彻底解决找不到rootfs的问题
           sudo mkdir -p /mnt/rootfs/boot/grub
           sudo tee /mnt/rootfs/boot/grub/grub.cfg > /dev/null <<EOF
           set default=0
           set timeout=5
           menuentry "Debian Linux" {
-              linux /boot/vmlinuz-${KERNEL_VERSION} root=LABEL=rootfs rw quiet
+              linux /boot/vmlinuz-${KERNEL_VERSION} root=LABEL=rootfs root=UUID=$ROOTFS_UUID rw quiet
               initrd /boot/initrd.img-${KERNEL_VERSION}
           }
           EOF
 
-          # 复制 grub.cfg 到 EFI 分区
+          # 复制 grub.cfg 到所有EFI引导目录
           sudo mkdir -p /mnt/efi/EFI/debian
           sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/efi/EFI/debian/grub.cfg 2>/dev/null || true
           sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/efi/EFI/BOOT/grub.cfg 2>/dev/null || true
 
+          # 按顺序卸载所有bind挂载，避免设备忙
+          sudo umount /mnt/rootfs/boot/efi || true
           sudo umount /mnt/rootfs/dev /mnt/rootfs/proc /mnt/rootfs/sys || true
 
       - name: Cleanup and Compress
@@ -173,7 +180,7 @@ jobs:
           sudo losetup -d "$LOOP" || true
           cd "$WORK_DIR"
           gzip -9 -k "$IMG_FILE"
-          ( cd "$WORK_DIR" && sha256sum debian-rootfs.img.gz > debian-rootfs.img.gz.sha256 )
+          ( cd "$WORK_DIR" && sha256sum debian-rootfs-mbr.img.gz > debian-rootfs-mbr.img.gz.sha256 )
 
       - name: Create Release and upload
         uses: ncipollo/release-action@v1
@@ -183,10 +190,10 @@ jobs:
           allowUpdates: true
           replacesArtifacts: true
           artifacts: |
-            ${{ env.WORK_DIR }}/debian-rootfs.img.gz
-            ${{ env.WORK_DIR }}/debian-rootfs.img.gz.sha256
+            ${{ env.WORK_DIR }}/debian-rootfs-mbr.img.gz
+            ${{ env.WORK_DIR }}/debian-rootfs-mbr.img.gz.sha256
           body: |
-            Debian IMG (MBR兼容版)）
+            Debian IMG (MBR兼容版)
             分区表为MBR
             初始 root 密码：`1234`
             
@@ -196,7 +203,7 @@ jobs:
             ```bash
             lsblk -o NAME,SIZE,MODEL,TRAN,MOUNTPOINT
             sudo umount /dev/sdX?* 2>/dev/null || true
-            gunzip -c debian-rootfs.img.gz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+            gunzip -c debian-rootfs-mbr.img.gz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
             sudo sync
             
             ## 将系统安装到机器硬盘（U盘启动后运行）
