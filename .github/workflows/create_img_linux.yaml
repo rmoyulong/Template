@@ -85,6 +85,7 @@ jobs:
           sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner
           
           # 放入把系统安装到硬盘的脚本
+          #Debian 的 /root 默认是 700，属主 root。runner 的普通用户虽然通过 sudo cp 能写进去（sudo 提权），但随后 ls -l /mnt/rootfs/root/install.sh 没有 sudo，普通用户无法进入 700 的 /root 目录读取文件，于是报 Permission denied。/root 保持 700 是 Debian 默认，不要改成 755，否则目标系统里普通用户能进 root 家目录。验证用 sudo ls 就行，不需要改目录权限
           INSTALLER_SRC="${{ github.workspace }}/patch/install.sh"
           if [ ! -f "$INSTALLER_SRC" ]; then
             echo "ERROR: $INSTALLER_SRC 不存在"
