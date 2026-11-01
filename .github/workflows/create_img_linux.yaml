@@ -40,9 +40,10 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
+          # 注意：补全了 grub-efi-ia32-bin（宿主机 32 位 EFI 回退需要）
           sudo apt-get install -y \
             wget parted e2fsprogs dosfstools \
-            grub-pc-bin grub-efi-amd64-bin grub-common \
+            grub-pc-bin grub-efi-amd64-bin grub-efi-ia32-bin grub-common \
             mtools xorriso rsync dos2unix
 
       - name: Download rootfs, modules, bzImage
@@ -85,7 +86,6 @@ jobs:
           sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner
           
           # 放入把系统安装到硬盘的脚本
-          #Debian 的 /root 默认是 700，属主 root。runner 的普通用户虽然通过 sudo cp 能写进去（sudo 提权），但随后 ls -l /mnt/rootfs/root/install.sh 没有 sudo，普通用户无法进入 700 的 /root 目录读取文件，于是报 Permission denied。/root 保持 700 是 Debian 默认，不要改成 755，否则目标系统里普通用户能进 root 家目录。验证用 sudo ls 就行，不需要改目录权限
           INSTALLER_SRC="${{ github.workspace }}/patch/install.sh"
           if [ ! -f "$INSTALLER_SRC" ]; then
             echo "ERROR: $INSTALLER_SRC 不存在"
@@ -98,24 +98,15 @@ jobs:
           sudo sed -i 's/\r$//' /mnt/rootfs/root/install.sh
           echo "=== 安装脚本已放入 /root/install.sh ==="
           sudo ls -l /mnt/rootfs/root/install.sh
-          sudo head -5 /mnt/rootfs/root/install.sh
 
           # 解压 modules 到临时目录
           rm -rf /tmp/modules-extract
           mkdir -p /tmp/modules-extract
           sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /tmp/modules-extract
 
-          echo "=== modules.tar.gz 解压后的顶层目录 ==="
-          sudo find /tmp/modules-extract -maxdepth 1 -mindepth 1
-
-          # 检查 bzImage 内部版本字符串，辅助确认 KERNEL_VERSION 是否匹配
-          echo "=== bzImage 内部版本字符串 ==="
-          strings "$WORK_DIR/bzImage" | grep -m1 -o '6\.12\.[0-9]*[^ ]*' || true
-
           VERSION_DIR=$(sudo find /tmp/modules-extract -maxdepth 4 -type d -name "${KERNEL_VERSION}" -print -quit)
           if [ -z "$VERSION_DIR" ]; then
             echo "ERROR: 在 modules.tar.gz 中找不到 ${KERNEL_VERSION} 目录"
-            sudo find /tmp/modules-extract -maxdepth 2 -type d
             exit 1
           fi
           echo "找到模块目录: $VERSION_DIR"
@@ -128,11 +119,6 @@ jobs:
           sudo mkdir -p /mnt/rootfs/boot
           sudo cp "$WORK_DIR/bzImage" "/mnt/rootfs/boot/vmlinuz-${KERNEL_VERSION}"
 
-          echo "=== /mnt/rootfs/lib/modules 内容 ==="
-          ls -la /mnt/rootfs/lib/modules/
-          echo "=== /mnt/rootfs/boot 内容 ==="
-          ls -la /mnt/rootfs/boot/
-
       - name: Generate initramfs and install GRUB (chroot)
         run: |
           LOOP="${{ env.LOOP }}"
@@ -144,79 +130,61 @@ jobs:
 
           # 检查必要工具
           if [ ! -x /mnt/rootfs/usr/sbin/update-initramfs ]; then
-            echo "ERROR: rootfs 中没有 update-initramfs，请重建 rootfs 并加入 initramfs-tools"
+            echo "ERROR: rootfs 中没有 update-initramfs"
             exit 1
           fi
           if [ ! -x /mnt/rootfs/sbin/depmod ]; then
-            echo "ERROR: rootfs 中没有 depmod，请重建 rootfs 并加入 kmod"
+            echo "ERROR: rootfs 中没有 depmod"
             exit 1
           fi
 
-          # 伪造内核 config，让 update-initramfs 的压缩检查通过
+          # 伪造内核 config
           sudo tee "/mnt/rootfs/boot/config-${KERNEL_VERSION}" > /dev/null <<'EOF'
           CONFIG_RD_GZIP=y
-          CONFIG_RD_BZIP2=y
-          CONFIG_RD_LZMA=y
-          CONFIG_RD_XZ=y
-          CONFIG_RD_LZO=y
-          CONFIG_RD_LZ4=y
-          CONFIG_RD_ZSTD=y
           EOF
 
           # 确保压缩方式为 gzip
           sudo mkdir -p /mnt/rootfs/etc/initramfs-tools
-          if [ -f /mnt/rootfs/etc/initramfs-tools/initramfs.conf ]; then
-            sudo sed -i 's/^COMPRESS=.*/COMPRESS=gzip/' /mnt/rootfs/etc/initramfs-tools/initramfs.conf
-          else
-            echo "COMPRESS=gzip" | sudo tee /mnt/rootfs/etc/initramfs-tools/initramfs.conf
-          fi
+          echo "COMPRESS=gzip" | sudo tee /mnt/rootfs/etc/initramfs-tools/initramfs.conf
 
-          # depmod 重建模块依赖
-          echo "=== 执行 depmod ==="
+          # depmod 和 initramfs
           sudo chroot /mnt/rootfs /bin/bash -c "depmod -a ${KERNEL_VERSION}"
-
-          # 生成 initramfs
-          echo "=== 执行 update-initramfs ==="
           sudo chroot /mnt/rootfs /bin/bash -c "update-initramfs -c -k ${KERNEL_VERSION}"
 
-          # 确认 initrd 存在
           if [ ! -f "/mnt/rootfs/boot/initrd.img-${KERNEL_VERSION}" ]; then
-            echo "ERROR: initramfs 生成失败，/boot/initrd.img-${KERNEL_VERSION} 不存在"
-            ls -la /mnt/rootfs/boot/
+            echo "ERROR: initramfs 生成失败"
             exit 1
           fi
           echo "initramfs 生成成功"
 
           # 写 fstab（用 LABEL 定位根分区）
           sudo tee /mnt/rootfs/etc/fstab > /dev/null <<'EOF'
-          # <file system> <mount point> <type> <options> <dump> <pass>
           LABEL=rootfs  /  ext4  errors=remount-ro  0  1
           EOF
 
-          # 安装 GRUB 软件包（若 rootfs 中已存在则跳过）
+          # 安装 GRUB 软件包 (包含 i386-efi 支持)
           echo "=== 安装 GRUB 软件包 ==="
           sudo chroot /mnt/rootfs /bin/bash -c "
             export DEBIAN_FRONTEND=noninteractive
-            if ! command -v grub-install >/dev/null 2>&1; then
-              apt-get update || true
-              apt-get install -y grub-pc grub-efi-amd64 || true
-            fi
+            apt-get update || true
+            apt-get install -y grub-pc grub-efi-amd64 grub-efi-ia32 || true
           "
 
-          # chroot 内安装 GRUB 到镜像
+          # chroot 内安装 GRUB (BIOS + 64-bit EFI + 32-bit EFI)
           echo "=== chroot 内安装 GRUB ==="
           sudo chroot /mnt/rootfs /bin/bash -c "
             grub-install --target=i386-pc --recheck ${LOOP} || true
             grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true
+            grub-install --target=i386-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true
           "
 
-          # 如果 chroot 安装失败，用宿主机 grub 回退
+          # 如果 chroot 失败，宿主机回退（BIOS 模式）
           if [ ! -f /mnt/rootfs/boot/grub/i386-pc/normal.mod ]; then
-            echo "chroot grub-install 失败，使用宿主机 grub 回退"
+            echo "chroot grub-install 失败，使用宿主机 grub 回退 BIOS 部分"
             sudo grub-install --target=i386-pc --boot-directory=/mnt/rootfs/boot "${LOOP}" || true
           fi
 
-          # 手动写 grub.cfg，确保内核和 initrd 路径正确
+          # 手动写 grub.cfg
           echo "=== 写入 grub.cfg ==="
           sudo mkdir -p /mnt/rootfs/boot/grub
           sudo tee /mnt/rootfs/boot/grub/grub.cfg > /dev/null <<EOF
@@ -227,12 +195,25 @@ jobs:
               linux /boot/vmlinuz-${KERNEL_VERSION} root=LABEL=rootfs rw quiet
               initrd /boot/initrd.img-${KERNEL_VERSION}
           }
-
-          menuentry "Debian ${KERNEL_VERSION} (recovery)" {
-              linux /boot/vmlinuz-${KERNEL_VERSION} root=LABEL=rootfs rw single
-              initrd /boot/initrd.img-${KERNEL_VERSION}
-          }
           EOF
+
+          # 确保 EFI 分区里有 fallback 引导文件 (关键！解决你的报错)
+          echo "=== 检查并复制 EFI 引导文件 ==="
+          sudo mkdir -p /mnt/efi/EFI/BOOT
+          # 如果生成的是 debian 目录，把它里面的内容复制一份到默认的 BOOT 目录
+          if [ -d /mnt/efi/EFI/debian ]; then
+            sudo cp -r /mnt/efi/EFI/debian/* /mnt/efi/EFI/BOOT/ 2>/dev/null || true
+            # 针对不同架构重命名 fallback 文件名
+            if [ -f /mnt/efi/EFI/BOOT/grubia32.efi ]; then
+              sudo cp /mnt/efi/EFI/BOOT/grubia32.efi /mnt/efi/EFI/BOOT/BOOTIA32.EFI
+            fi
+            if [ -f /mnt/efi/EFI/BOOT/grubx64.efi ]; then
+              sudo cp /mnt/efi/EFI/BOOT/grubx64.efi /mnt/efi/EFI/BOOT/BOOTX64.EFI
+            fi
+          fi
+          
+          echo "=== 最终的 EFI 目录结构 ==="
+          sudo find /mnt/efi/EFI -type f
 
           # 卸载 chroot 挂载
           sudo umount /mnt/rootfs/dev  || true
@@ -260,31 +241,23 @@ jobs:
           name: image-debian-latest
           allowUpdates: true
           replacesArtifacts: true
-          artifacts: ${{ env.WORK_DIR }}/*.img.gz*
+          artifacts: |
+            ${{ env.WORK_DIR }}/debian-rootfs.img.gz
+            ${{ env.WORK_DIR }}/debian-rootfs.img.gz.sha256
           body: |
-            可启动 Debian IMG（x86_64）
+            可启动 Debian IMG（支持 32位/64位 UEFI + BIOS 启动）
             内核：${{ env.KERNEL_VERSION }}
             rootfs：Debian bookworm + SSH/FTP/Nginx/PHP8
             初始 root 密码：`1234`（首次 SSH 登录强制改密）
-            写入 U 盘或者硬盘：
-            # 先确认设备（X 是目标盘，如 sdb）
+
+            ## 写入 U 盘或硬盘
+
+            先确认目标设备（把 `sdX` 换成实际盘符，如 `sdb`）：
+            ```bash
             lsblk -o NAME,SIZE,MODEL,TRAN,MOUNTPOINT
-            # 确认后卸载该盘所有分区（把 sdX 换成实际盘符）
             sudo umount /dev/sdX?* 2>/dev/null || true
-            # 写入
             gunzip -c debian-rootfs.img.gz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
             sudo sync
-            在安装好的机器上扩展目标硬盘空间
-            # 查看根分区设备
-            findmnt /
-            # 假设输出 /dev/sda3，整盘是 /dev/sda，分区号是 3
-            sudo growpart /dev/sda 3
-            sudo resize2fs /dev/sda3
-            
-            或者写一个bash处理文件：
-            sudo apt install -y cloud-guest-utils   # 提供 growpart
-            ROOT_PART=$(findmnt -n -o SOURCE /)
-            ROOT_DISK=$(lsblk -no PKNAME "$ROOT_PART")
-            PART_NUM=$(cat /sys/class/block/$(basename "$ROOT_PART")/partition)
-            sudo growpart "/dev/$ROOT_DISK" "$PART_NUM"
-            sudo resize2fs "$ROOT_PART"            
+            将系统安装到机器硬盘（U盘启动后运行）
+            ```bash
+            sudo sh /root/install.sh
