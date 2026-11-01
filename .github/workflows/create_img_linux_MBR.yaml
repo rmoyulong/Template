@@ -1,4 +1,4 @@
-name: 编译Bootable IMG (极简兼容版)
+name: 编译Bootable IMG (MBR兼容版)
 
 on:
   workflow_dispatch:
@@ -46,32 +46,37 @@ jobs:
           wget -q -O modules.tar.gz "$MODULES_URL"
           wget -q -O bzImage "$BZIMAGE_URL"
 
-      - name: Create disk image (MBR + FAT32)
+      - name: Create disk image (MBR + EFI + EXT4)
         run: |
           cd "$WORK_DIR"
           dd if=/dev/zero of="$IMG_FILE" bs=1M count=$IMG_SIZE_MB status=progress
 
-          # 注意这里使用 msdos 分区表 (MBR)，老主板兼容性最好
+          # MBR 分区表，最大程度兼容老主板
           parted -s "$IMG_FILE" mklabel msdos
-          parted -s "$IMG_FILE" mkpart primary fat32 1MiB 100%
+          # p1: 200MB FAT32 用于 EFI 引导
+          parted -s "$IMG_FILE" mkpart primary fat32 1MiB 201MiB
           parted -s "$IMG_FILE" set 1 boot on
+          # p2: 剩余空间 EXT4 用于根文件系统
+          parted -s "$IMG_FILE" mkpart primary ext4 201MiB 100%
 
           LOOP=$(sudo losetup --find --show --partscan "$IMG_FILE")
           echo "LOOP=$LOOP" >> "$GITHUB_ENV"
           sleep 2
 
-          # 直接格式化为 FAT32，不需要 ext4
           sudo mkfs.vfat -F32 "${LOOP}p1"
+          sudo mkfs.ext4 -F -L rootfs "${LOOP}p2"
 
       - name: Populate rootfs
         run: |
           LOOP="${{ env.LOOP }}"
-          sudo mkdir -p /mnt/rootfs
-          sudo mount "${LOOP}p1" /mnt/rootfs
+          sudo mkdir -p /mnt/rootfs /mnt/efi
+          sudo mount "${LOOP}p2" /mnt/rootfs
+          sudo mount "${LOOP}p1" /mnt/efi
 
+          # 解压到 EXT4 分区，不再报 symlink/权限 错误
           sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner
 
-          # 放安装脚本
+          # 放入安装脚本
           INSTALLER_SRC="${{ github.workspace }}/patch/install.sh"
           if [ -f "$INSTALLER_SRC" ]; then
             sudo mkdir -p /mnt/rootfs/root
@@ -92,62 +97,67 @@ jobs:
           sudo mkdir -p /mnt/rootfs/boot
           sudo cp "$WORK_DIR/bzImage" "/mnt/rootfs/boot/vmlinuz-${KERNEL_VERSION}"
 
-          # fstab: 直接让 / 挂载在 sda1 上
-          sudo tee /mnt/rootfs/etc/fstab > /dev/null <<'EOF'
-          /dev/sda1  /  vfat  defaults  0  1
-          EOF
-
-      - name: Install GRUB (极简模式)
+      - name: Generate initramfs and install GRUB
         run: |
           LOOP="${{ env.LOOP }}"
           sudo mount --bind /dev /mnt/rootfs/dev
           sudo mount --bind /proc /mnt/rootfs/proc
           sudo mount --bind /sys /mnt/rootfs/sys
 
-          echo "=== 在 chroot 中安装 GRUB 到 FAT32 引导区 ==="
+          # 伪造 config 以生成 initramfs
+          sudo tee "/mnt/rootfs/boot/config-${KERNEL_VERSION}" > /dev/null <<'EOF'
+          CONFIG_RD_GZIP=y
+          EOF
+          echo "COMPRESS=gzip" | sudo tee /mnt/rootfs/etc/initramfs-tools/initramfs.conf
+          
+          sudo chroot /mnt/rootfs /bin/bash -c "depmod -a ${KERNEL_VERSION}"
+          sudo chroot /mnt/rootfs /bin/bash -c "update-initramfs -c -k ${KERNEL_VERSION}"
+
+          # fstab
+          sudo tee /mnt/rootfs/etc/fstab > /dev/null <<'EOF'
+          LABEL=rootfs  /  ext4  errors=remount-ro  0  1
+          EOF
+
+          # 安装 GRUB
           sudo chroot /mnt/rootfs /bin/bash -c "
             export DEBIAN_FRONTEND=noninteractive
             apt-get update || true
             apt-get install -y grub-pc grub-efi-amd64 grub-efi-ia32 || true
             
-            # 强制安装 BIOS 模式（由于是单 FAT32 分区，需要 embed）
+            # BIOS 模式：写入 MBR
             grub-install --target=i386-pc --recheck ${LOOP} || true
             
-            # 安装 32 位和 64 位 EFI 模式
-            grub-install --target=x86_64-efi --efi-directory=/ --boot-directory=/boot --bootloader-id=debian --recheck || true
-            grub-install --target=i386-efi --efi-directory=/ --boot-directory=/boot --bootloader-id=debian --recheck || true
+            # UEFI 模式：写入 p1 分区 (挂载在 /boot/efi)
+            mkdir -p /boot/efi
+            mount ${LOOP}p1 /boot/efi
+            grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true
+            grub-install --target=i386-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true
           "
 
-          echo "=== 写入 grub.cfg ==="
+          # 确保 fallback BOOTIA32.EFI 存在 (针对 Bay Trail)
+          sudo mkdir -p /mnt/efi/EFI/BOOT
+          if [ -f /mnt/efi/EFI/debian/grubia32.efi ]; then
+            sudo cp /mnt/efi/EFI/debian/grubia32.efi /mnt/efi/EFI/BOOT/BOOTIA32.EFI
+          fi
+          if [ -f /mnt/efi/EFI/debian/grubx64.efi ]; then
+            sudo cp /mnt/efi/EFI/debian/grubx64.efi /mnt/efi/EFI/BOOT/BOOTX64.EFI
+          fi
+
+          # 写 grub.cfg
           sudo mkdir -p /mnt/rootfs/boot/grub
           sudo tee /mnt/rootfs/boot/grub/grub.cfg > /dev/null <<EOF
           set default=0
           set timeout=5
-
           menuentry "Debian Linux" {
-              # 注意：这里去掉了 initrd，内核直接挂载 sda1 为 vfat 根目录
-              linux /boot/vmlinuz-${KERNEL_VERSION} root=/dev/sda1 rw rootfstype=vfat quiet
+              linux /boot/vmlinuz-${KERNEL_VERSION} root=LABEL=rootfs rw quiet
+              initrd /boot/initrd.img-${KERNEL_VERSION}
           }
           EOF
 
-          # 复制配置文件到 EFI 目录，确保都能读到
-          sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/rootfs/EFI/BOOT/grub.cfg 2>/dev/null || true
-          sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/rootfs/grub/grub.cfg 2>/dev/null || true
-
-          # 强制确保 fallback 文件名存在
-          sudo mkdir -p /mnt/rootfs/EFI/BOOT
-          for arch in i386 x86_64; do
-            if [ -f "/mnt/rootfs/EFI/debian/grub${arch}.efi" ]; then
-              if [ "$arch" = "i386" ]; then
-                sudo cp "/mnt/rootfs/EFI/debian/grub${arch}.efi" "/mnt/rootfs/EFI/BOOT/BOOTIA32.EFI"
-              else
-                sudo cp "/mnt/rootfs/EFI/debian/grub${arch}.efi" "/mnt/rootfs/EFI/BOOT/BOOTX64.EFI"
-              fi
-            fi
-          done
-
-          echo "=== 检查 EFI/BOOT 下是否有文件 ==="
-          sudo ls -la /mnt/rootfs/EFI/BOOT/ || true
+          # 复制 grub.cfg 到 EFI 分区
+          sudo mkdir -p /mnt/efi/EFI/debian
+          sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/efi/EFI/debian/grub.cfg 2>/dev/null || true
+          sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/efi/EFI/BOOT/grub.cfg 2>/dev/null || true
 
           sudo umount /mnt/rootfs/dev /mnt/rootfs/proc /mnt/rootfs/sys || true
 
@@ -155,6 +165,7 @@ jobs:
         run: |
           LOOP="${{ env.LOOP }}"
           sudo umount /mnt/rootfs || true
+          sudo umount /mnt/efi || true
           sudo losetup -d "$LOOP" || true
           cd "$WORK_DIR"
           gzip -9 -k "$IMG_FILE"
@@ -163,17 +174,15 @@ jobs:
       - name: Create Release and upload
         uses: ncipollo/release-action@v1
         with:
-          tag: image-debian-MBR-latest
-          name: image-debian-MBR-latest
+          tag: image-debian-latest
+          name: image-debian-latest
           allowUpdates: true
           replacesArtifacts: true
           artifacts: |
             ${{ env.WORK_DIR }}/debian-rootfs.img.gz
             ${{ env.WORK_DIR }}/debian-rootfs.img.gz.sha256
           body: |
-            可启动 Debian IMG (单分区极简兼容版)
-            分区表为MBR
-            内核：${{ env.KERNEL_VERSION }}
+            Debian IMG (MBR兼容版)
             初始 root 密码：`1234`
             
             ## 写入 U 盘或硬盘
