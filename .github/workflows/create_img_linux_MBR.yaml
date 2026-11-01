@@ -174,8 +174,8 @@ jobs:
       - name: Create Release and upload
         uses: ncipollo/release-action@v1
         with:
-          tag: image-debian-latest
-          name: image-debian-latest
+          tag: image-debian-MBR-latest
+          name: image-debian-MBR-latest
           allowUpdates: true
           replacesArtifacts: true
           artifacts: |
