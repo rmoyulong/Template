@@ -183,7 +183,7 @@ jobs:
             apt-get update || true
             apt-get install -y --no-install-recommends \
               grub-pc grub-efi-amd64 grub-efi-ia32 \
-              parted dosfstools e2fsprogs rsync \
+              parted dosfstools e2fsprogs rsync usbutils \
               fake-hwclock systemd-timesyncd || true
             apt-get clean && rm -rf /var/lib/apt/lists/*
           "
