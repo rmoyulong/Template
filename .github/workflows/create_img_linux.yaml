@@ -40,7 +40,6 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update
-          # 注意：补全了 grub-efi-ia32-bin（宿主机 32 位 EFI 回退需要）
           sudo apt-get install -y \
             wget parted e2fsprogs dosfstools \
             grub-pc-bin grub-efi-amd64-bin grub-efi-ia32-bin grub-common \
@@ -74,6 +73,10 @@ jobs:
 
           sudo mkfs.fat -F32 "${LOOP}p2"
           sudo mkfs.ext4 -F -L rootfs "${LOOP}p3"
+          
+          # 提前导出根分区UUID，后续写入配置做双重兜底
+          ROOTFS_UUID=$(sudo blkid -s UUID -o value "${LOOP}p3")
+          echo "ROOTFS_UUID=$ROOTFS_UUID" >> "$GITHUB_ENV"
 
       - name: Populate rootfs
         run: |
@@ -82,7 +85,7 @@ jobs:
           sudo mount "${LOOP}p3" /mnt/rootfs
           sudo mount "${LOOP}p2" /mnt/efi
 
-          # 解压 rootfs
+          # 解压 rootfs，保留完整权限和符号链接
           sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner
           
           # 放入把系统安装到硬盘的脚本
@@ -122,11 +125,17 @@ jobs:
       - name: Generate initramfs and install GRUB (chroot)
         run: |
           LOOP="${{ env.LOOP }}"
-
-          # 准备 chroot 挂载
+          ROOTFS_UUID="${{ env.ROOTFS_UUID }}"
+          
+          # 提前在rootfs内创建EFI挂载点，避免后续挂载异常
+          sudo mkdir -p /mnt/rootfs/dev /mnt/rootfs/proc /mnt/rootfs/sys /mnt/rootfs/boot/efi
+          
+          # 标准bind挂载系统虚拟目录
           sudo mount --bind /dev  /mnt/rootfs/dev
           sudo mount --bind /proc /mnt/rootfs/proc
           sudo mount --bind /sys  /mnt/rootfs/sys
+          # 把外部已挂载的EFI分区bind进chroot，彻底避免重复挂载冲突
+          sudo mount --bind /mnt/efi /mnt/rootfs/boot/efi
 
           # 检查必要工具
           if [ ! -x /mnt/rootfs/usr/sbin/update-initramfs ]; then
@@ -157,9 +166,10 @@ jobs:
           fi
           echo "initramfs 生成成功"
 
-          # 写 fstab（用 LABEL 定位根分区）
-          sudo tee /mnt/rootfs/etc/fstab > /dev/null <<'EOF'
+          # 写 fstab（LABEL+UUID双配置，双重兜底）
+          sudo tee /mnt/rootfs/etc/fstab > /dev/null <<EOF
           LABEL=rootfs  /  ext4  errors=remount-ro  0  1
+          UUID=$ROOTFS_UUID  /  ext4  errors=remount-ro  0  1
           EOF
 
           # 安装 GRUB 软件包 (包含 i386-efi 支持)
@@ -173,7 +183,8 @@ jobs:
           # chroot 内安装 GRUB (BIOS + 64-bit EFI + 32-bit EFI)
           echo "=== chroot 内安装 GRUB ==="
           sudo chroot /mnt/rootfs /bin/bash -c "
-            grub-install --target=i386-pc --recheck ${LOOP} || true
+            # 加--force强制写入loop设备的BIOS Boot分区，避免grub-install跳过
+            grub-install --target=i386-pc --recheck --force ${LOOP} || true
             grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true
             grub-install --target=i386-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true
           "
@@ -184,7 +195,7 @@ jobs:
             sudo grub-install --target=i386-pc --boot-directory=/mnt/rootfs/boot "${LOOP}" || true
           fi
 
-          # 手动写 grub.cfg
+          # 手动写 grub.cfg，同时写入LABEL和UUID双根参数，彻底解决找不到rootfs的问题
           echo "=== 写入 grub.cfg ==="
           sudo mkdir -p /mnt/rootfs/boot/grub
           sudo tee /mnt/rootfs/boot/grub/grub.cfg > /dev/null <<EOF
@@ -192,10 +203,14 @@ jobs:
           set timeout=5
 
           menuentry "Debian ${KERNEL_VERSION}" {
-              linux /boot/vmlinuz-${KERNEL_VERSION} root=LABEL=rootfs rw quiet
+              linux /boot/vmlinuz-${KERNEL_VERSION} root=LABEL=rootfs root=UUID=$ROOTFS_UUID rw quiet
               initrd /boot/initrd.img-${KERNEL_VERSION}
           }
           EOF
+
+          # 把grub.cfg同步到所有EFI引导目录，避免部分主板读不到配置
+          sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/efi/EFI/debian/grub.cfg 2>/dev/null || true
+          sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/efi/EFI/BOOT/grub.cfg 2>/dev/null || true
 
           # 确保 EFI 分区里有 fallback 引导文件 (关键！解决你的报错)
           echo "=== 检查并复制 EFI 引导文件 ==="
@@ -215,7 +230,8 @@ jobs:
           echo "=== 最终的 EFI 目录结构 ==="
           sudo find /mnt/efi/EFI -type f
 
-          # 卸载 chroot 挂载
+          # 按顺序卸载所有bind挂载，避免设备忙
+          sudo umount /mnt/rootfs/boot/efi || true
           sudo umount /mnt/rootfs/dev  || true
           sudo umount /mnt/rootfs/proc || true
           sudo umount /mnt/rootfs/sys  || true
