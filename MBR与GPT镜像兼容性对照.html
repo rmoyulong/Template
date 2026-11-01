@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MBR与GPT启动镜像兼容性对照表</title>
+    <script src="https://aisearch-task.bj.bcebos.com/static/tailwindcss-3.4.17.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'PingFang SC', 'HarmonyOS Sans SC', 'Microsoft YaHei', sans-serif;
+            background: linear-gradient(135deg, #f5f7fa 0%, #e4edf5 100%);
+            min-height: 100vh;
+            padding: 24px 16px;
+        }
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            box-shadow: 0 8px 32px rgba(0, 40, 80, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            overflow: hidden;
+        }
+        .badge-success {
+            background: rgba(34, 197, 94, 0.12);
+            color: #16a34a;
+        }
+        .badge-error {
+            background: rgba(239, 68, 68, 0.12);
+            color: #dc2626;
+        }
+        .badge-warning {
+            background: rgba(245, 158, 11, 0.12);
+            color: #d97706;
+        }
+        .table-row:hover {
+            background: rgba(59, 130, 246, 0.04);
+        }
+        @keyframes fadeInUp {
+            from {
+                opacity: 0.92;
+                transform: translateY(12px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        .animate-card {
+            animation: fadeInUp 0.6s cubic-bezier(.2,.8,.2,1) forwards;
+        }
+        .animate-delay-1 { animation-delay: 0.1s; opacity: 0.92; }
+        .animate-delay-2 { animation-delay: 0.2s; opacity: 0.92; }
+        .animate-delay-3 { animation-delay: 0.3s; opacity: 0.92; }
+        .animate-delay-4 { animation-delay: 0.4s; opacity: 0.92; }
+    </style>
+</head>
+<body>
+    <div class="max-w-5xl mx-auto space-y-6">
+        <!-- 标题区域 -->
+        <div class="card animate-card p-6 md:p-8 text-center">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-900 tracking-tight mb-2">MBR 与 GPT 启动镜像兼容性对照表</h1>
+            <p class="text-gray-500 text-base md:text-lg max-w-2xl mx-auto">Debian可启动镜像选型指南，覆盖老BIOS、UEFI双架构与特殊硬件适配场景</p>
+            <div class="flex flex-wrap justify-center gap-3 mt-4">
+                <span class="px-3 py-1 rounded-full text-sm font-medium bg-blue-50 text-blue-700">双架构支持</span>
+                <span class="px-3 py-1 rounded-full text-sm font-medium bg-green-50 text-green-700">Bay Trail兼容</span>
+                <span class="px-3 py-1 rounded-full text-sm font-medium bg-purple-50 text-purple-700">大容量磁盘支持</span>
+            </div>
+        </div>
+
+        <!-- 核心硬件适配对比表 -->
+        <div class="card animate-card animate-delay-1 overflow-hidden">
+            <div class="p-6 border-b border-gray-100">
+                <h2 class="text-xl font-bold text-gray-900 flex items-center gap-2">
+                    <svg class="w-[22px] h-[22px] text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/>
+                    </svg>
+                    核心硬件适配范围对比
+                </h2>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead>
+                        <tr class="bg-gray-50">
+                            <th class="px-6 py-4 text-left text-sm font-semibold text-gray-700 w-[35%]">硬件类型</th>
+                            <th class="px-6 py-4 text-center text-sm font-semibold text-blue-700 w-[32.5%]">MBR兼容版镜像</th>
+                            <th class="px-6 py-4 text-center text-sm font-semibold text-purple-700 w-[32.5%]">GPT版镜像</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-gray-100">
+                        <tr class="table-row transition-colors">
+                            <td class="px-6 py-4 text-gray-800 font-medium">纯Legacy BIOS老主板（B85及更早芯片组）</td>
+                            <td class="px-6 py-4 text-center"><span class="px-3 py-1 rounded-full text-sm font-medium badge-success">✅ 完美支持</span></td>
+                            <td class="px-6 py-4 text-center"><span class="px-3 py-1 rounded-full text-sm font-medium badge-error">❌ 无法识别</span></td>
+                        </tr>
+                        <tr class="table-row transition-colors">
+                            <td class="px-6 py-4 text-gray-800 font-medium">Bay Trail 32位UEFI小主板</td>
+                            <td class="px-6 py-4 text-center"><span class="px-3 py-1 rounded-full text-sm font-medium badge-success">✅ 原生适配</span></td>
+                            <td class="px-6 py-4 text-center"><span class="px-3 py-1 rounded-full text-sm font-medium badge-warning">⚠️ 偶发失败</span></td>
+                        </tr>
+                        <tr class="table-row transition-colors">
+                            <td class="px-6 py-4 text-gray-800 font-medium">64位UEFI新主板（2015年后发布）</td>
+                            <td class="px-6 py-4 text-center"><span class="px-3 py-1 rounded-full text-sm font-medium badge-warning">⚠️ CSM兼容启动</span></td>
+                            <td class="px-6 py-4 text-center"><span class="px-3 py-1 rounded-full text-sm font-medium badge-success">✅ 原生UEFI启动</span></td>
+                        </tr>
+                        <tr class="table-row transition-colors">
+                            <td class="px-6 py-4 text-gray-800 font-medium">大于2TB的大容量硬盘</td>
+                            <td class="px-6 py-4 text-center"><span class="px-3 py-1 rounded-full text-sm font-medium badge-error">❌ 最多识别2TB</span></td>
+                            <td class="px-6 py-4 text-center"><span class="px-3 py-1 rounded-full text-sm font-medium badge-success">✅ 无容量上限</span></td>
+                        </tr>
+                        <tr class="table-row transition-colors">
+                            <td class="px-6 py-4 text-gray-800 font-medium">2TB及以下U盘/移动硬盘</td>
+                            <td class="px-6 py-4 text-center"><span class="px-3 py-1 rounded-full text-sm font-medium badge-success">✅ 全兼容无压力</span></td>
+                            <td class="px-6 py-4 text-center"><span class="px-3 py-1 rounded-full text-sm font-medium badge-success">✅ 稳定支持</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- 启动特性细节对比 -->
+        <div class="grid md:grid-cols-2 gap-6">
+            <!-- MBR优势卡片 -->
+            <div class="card animate-card animate-delay-2 p-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="w-10 h-10 rounded-lg bg-blue-100 flex items-center justify-center">
+                        <svg class="w-[22px] h-[22px] text-blue-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-lg font-bold text-gray-900">MBR镜像专属优势</h3>
+                </div>
+                <ul class="space-y-3">
+                    <li class="flex items-start gap-2">
+                        <span class="text-blue-600 mt-0.5 shrink-0">•</span>
+                        <span class="text-gray-700 leading-relaxed">完全兼容2012年之前发布的所有纯传统BIOS主板，无固件识别门槛</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <span class="text-blue-600 mt-0.5 shrink-0">•</span>
+                        <span class="text-gray-700 leading-relaxed">分区结构简单，老BIOS引导代码无需额外校验，几乎不会引导中断</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <span class="text-blue-600 mt-0.5 shrink-0">•</span>
+                        <span class="text-gray-700 leading-relaxed">U盘兼容性极强，老旧USB2.0主控U盘也能正常识别启动</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <span class="text-blue-600 mt-0.5 shrink-0">•</span>
+                        <span class="text-gray-700 leading-relaxed">Bay Trail等32位UEFI设备兼容性最佳，自带BOOTIA32.EFI兜底</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- GPT优势卡片 -->
+            <div class="card animate-card animate-delay-2 p-6">
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="w-10 h-10 rounded-lg bg-purple-100 flex items-center justify-center">
+                        <svg class="w-[22px] h-[22px] text-purple-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-lg font-bold text-gray-900">GPT镜像专属优势</h3>
+                </div>
+                <ul class="space-y-3">
+                    <li class="flex items-start gap-2">
+                        <span class="text-purple-600 mt-0.5 shrink-0">•</span>
+                        <span class="text-gray-700 leading-relaxed">自带分区表冗余备份，意外断电后分区表损坏概率远低于MBR</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <span class="text-purple-600 mt-0.5 shrink-0">•</span>
+                        <span class="text-gray-700 leading-relaxed">支持最多128个主分区，后续扩展无需创建扩展分区，更灵活</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <span class="text-purple-600 mt-0.5 shrink-0">•</span>
+                        <span class="text-gray-700 leading-relaxed">适配UEFI快速启动特性，新主板引导速度比MBR快30%以上</span>
+                    </li>
+                    <li class="flex items-start gap-2">
+                        <span class="text-purple-600 mt-0.5 shrink-0">•</span>
+                        <span class="text-gray-700 leading-relaxed">支持大于2TB系统盘，不会出现大容量硬盘容量浪费问题</span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- 选型决策指南 -->
+        <div class="card animate-card animate-delay-3 p-6 bg-gradient-to-r from-blue-50 to-purple-50 border-none">
+            <h2 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+                <svg class="w-[22px] h-[22px] text-indigo-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                </svg>
+                快速选型决策指南
+            </h2>
+            <div class="grid md:grid-cols-3 gap-4">
+                <div class="bg-white rounded-xl p-4 shadow-sm">
+                    <div class="text-blue-600 font-bold text-lg mb-2">优先选MBR版本</div>
+                    <p class="text-gray-600 text-sm leading-relaxed">2013年之前的老主板、Bay Trail小主机、不确定主板类型时，优先选MBR版本，100%兼容可启动</p>
+                </div>
+                <div class="bg-white rounded-xl p-4 shadow-sm">
+                    <div class="text-purple-600 font-bold text-lg mb-2">优先选GPT版本</div>
+                    <p class="text-gray-600 text-sm leading-relaxed">2015年之后的新主板、系统盘容量大于2TB，选GPT版本，稳定性和扩展性更好</p>
+                </div>
+                <div class="bg-white rounded-xl p-4 shadow-sm">
+                    <div class="text-amber-600 font-bold text-lg mb-2">通用兜底方案</div>
+                    <p class="text-gray-600 text-sm leading-relaxed">需要制作通用启动U盘时优先选MBR版本，向下兼容性最好，几乎不会出现完全无法引导的情况</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 页脚 -->
+        <div class="text-center text-gray-400 text-sm animate-card animate-delay-4 pb-4">
+            Debian 可启动镜像适配参考 · 支持双架构UEFI + Legacy BIOS启动
+        </div>
+    </div>
+</body>
+</html>
