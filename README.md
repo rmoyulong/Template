@@ -3,3 +3,4 @@
 例子1：红米ax6、ax3600固件编译<br>
 例子2：使用https://github.com/armbian/build 编译玩客云 armbian 线刷和卡刷固件<br>
 [![build](https://img.shields.io/github/actions/workflow/status/rmoyulong/Template/Armbian.yml)](https://github.com/rmoyulong/Template/actions/workflows/Armbian.yml) [![downloads](https://img.shields.io/github/downloads/rmoyulong/Template/total)](https://github.com/rmoyulong/Template/releases) [![downloads@latest](https://img.shields.io/github/downloads/rmoyulong/Template/latest/total)](https://github.com/rmoyulong/Template/releases/latest)<br>
+例子3：使用[https://github.com/armbian/build](https://www.kernel.org/) 编译j1900&j1800卡刷debian固件<br>
