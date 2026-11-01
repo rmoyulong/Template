@@ -84,11 +84,18 @@ jobs:
           # 解压 rootfs
           sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner
           
-          #放入把系统安装到硬盘的脚本
+          # 放入把系统安装到硬盘的脚本
+          INSTALLER_SRC="/home/runner/work/Template/Template/patch/install.sh"
+          if [ ! -f "$INSTALLER_SRC" ]; then
+            echo "ERROR: $INSTALLER_SRC 不存在"
+            exit 1
+          fi
           sudo mkdir -p /mnt/rootfs/root
-          sudo cp ${{ github.workspace }}/patch/install.sh /mnt/rootfs/root
-          sudo chmod -Rf 755 /mnt/rootfs/root/*.sh
-          sudo dos2unix /mnt/rootfs/root/*.sh
+          sudo cp "$INSTALLER_SRC" /mnt/rootfs/root/install.sh
+          sudo chmod 755 /mnt/rootfs/root/install.sh
+          sudo sed -i 's/\r$//' /mnt/rootfs/root/install.sh
+          echo "=== 安装脚本已放入 /root/install.sh ==="
+          ls -l /mnt/rootfs/root/install.sh
 
           # 解压 modules 到临时目录
           rm -rf /tmp/modules-extract
