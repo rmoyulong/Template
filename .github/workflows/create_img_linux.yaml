@@ -91,11 +91,13 @@ jobs:
             exit 1
           fi
           sudo mkdir -p /mnt/rootfs/root
+          sudo chmod 700 /mnt/rootfs/root
           sudo cp "$INSTALLER_SRC" /mnt/rootfs/root/install.sh
           sudo chmod 755 /mnt/rootfs/root/install.sh
           sudo sed -i 's/\r$//' /mnt/rootfs/root/install.sh
           echo "=== 安装脚本已放入 /root/install.sh ==="
-          ls -l /mnt/rootfs/root/install.sh
+          sudo ls -l /mnt/rootfs/root/install.sh
+          sudo head -5 /mnt/rootfs/root/install.sh
 
           # 解压 modules 到临时目录
           rm -rf /tmp/modules-extract
