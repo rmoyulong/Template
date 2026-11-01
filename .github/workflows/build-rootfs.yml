@@ -84,7 +84,7 @@ jobs:
               ethernets:
                 all-eth:
                   match:
-                    name: "en*"
+                    name: "*"
                   dhcp4: true
                   dhcp6: true
           EOF
