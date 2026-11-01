@@ -59,14 +59,21 @@ jobs:
             --variant=minbase \
             --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64 \
             "$DEBIAN_SUITE" "$ROOTFS_DIR" \
-            http://deb.debian.org/debian/
+            http://mirrors.tuna.tsinghua.edu.cn/debian/
 
       - name: Configure APT sources
         run: |
           sudo tee "$ROOTFS_DIR/etc/apt/sources.list" > /dev/null <<EOF
-          deb http://deb.debian.org/debian ${DEBIAN_SUITE} main contrib non-free non-free-firmware
-          deb http://deb.debian.org/debian ${DEBIAN_SUITE}-updates main contrib non-free non-free-firmware
-          deb http://security.debian.org/debian-security ${DEBIAN_SUITE}-security main contrib non-free non-free-firmware
+          deb http://mirrors.tuna.tsinghua.edu.cn/debian/ ${DEBIAN_SUITE} main non-free-firmware
+          deb-src http://mirrors.tuna.tsinghua.edu.cn/debian/ ${DEBIAN_SUITE} main non-free-firmware
+          
+          deb http://security.debian.org/debian-security ${DEBIAN_SUITE}-security main non-free-firmware
+          deb-src http://security.debian.org/debian-security ${DEBIAN_SUITE}-security main non-free-firmware
+          
+          # ${DEBIAN_SUITE}-updates, to get updates before a point release is made;
+          # see https://www.debian.org/doc/manuals/debian-reference/ch02.en.html#_updates_and_backports
+          deb http://mirrors.tuna.tsinghua.edu.cn/debian/ ${DEBIAN_SUITE}-updates main non-free-firmware
+          deb-src http://mirrors.tuna.tsinghua.edu.cn/debian/ ${DEBIAN_SUITE}-updates main non-free-firmware          
           EOF
 
       - name: Configure netplan (DHCP dynamic IP)

@@ -89,7 +89,7 @@ jobs:
           fi
         
           #替换apt为国内源sources.list
-          sudo cp -a ${{ github.workspace }}/patch/sources.list /mnt/rootfs/etc/apt/          
+          #sudo cp -a ${{ github.workspace }}/patch/sources.list /mnt/rootfs/etc/apt/          
 
           # 解压 modules
           rm -rf /tmp/modules-extract
