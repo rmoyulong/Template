@@ -1,0 +1,287 @@
+name: 编译Bootable IMG(rootfs+modules+bzImage)-GPT
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        description: 'Kernel version (must match modules/bzImage)'
+        required: false
+        default: '6.12.115'
+  push:
+    tags:
+      - 'img-*'
+
+permissions:
+  contents: write
+
+env:
+  KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '6.12.115' }}
+  IMG_SIZE_MB: 4096
+  WORK_DIR: ${{ github.workspace }}/work
+  IMG_FILE: ${{ github.workspace }}/work/debian-rootfs.img
+  ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-bookworm-latest/rootfs.tar.gz
+  MODULES_URL: https://github.com/rmoyulong/Template/releases/download/kernel-modules-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8/modules.tar.gz
+  BZIMAGE_URL: https://github.com/rmoyulong/Template/releases/download/kernel-image-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8/bzImage
+
+jobs:
+  build-img:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            wget parted e2fsprogs dosfstools \
+            grub-pc-bin grub-efi-amd64-bin grub-efi-ia32-bin grub-common \
+            mtools xorriso rsync dos2unix
+
+      - name: Download rootfs, modules, bzImage
+        run: |
+          mkdir -p "$WORK_DIR"
+          cd "$WORK_DIR"
+          wget -q -O rootfs.tar.gz "$ROOTFS_URL"
+          wget -q -O modules.tar.gz "$MODULES_URL"
+          wget -q -O bzImage "$BZIMAGE_URL"
+          ls -lh
+
+      - name: Create disk image and partitions
+        run: |
+          cd "$WORK_DIR"
+          dd if=/dev/zero of="$IMG_FILE" bs=1M count=$IMG_SIZE_MB status=progress
+
+          parted -s "$IMG_FILE" mklabel gpt
+          parted -s "$IMG_FILE" mkpart biosboot 1MiB 3MiB
+          parted -s "$IMG_FILE" set 1 bios_grub on
+          parted -s "$IMG_FILE" mkpart efi fat32 3MiB 103MiB
+          parted -s "$IMG_FILE" set 2 esp on
+          parted -s "$IMG_FILE" mkpart root ext4 103MiB 100%
+
+          LOOP=$(sudo losetup --find --show --partscan "$IMG_FILE")
+          echo "LOOP=$LOOP" >> "$GITHUB_ENV"
+          sleep 2
+          lsblk "$LOOP"
+
+          sudo mkfs.fat -F32 "${LOOP}p2"
+          sudo mkfs.ext4 -F -L rootfs "${LOOP}p3"
+          
+          # 提前导出根分区UUID，后续写入配置做双重兜底
+          ROOTFS_UUID=$(sudo blkid -s UUID -o value "${LOOP}p3")
+          echo "ROOTFS_UUID=$ROOTFS_UUID" >> "$GITHUB_ENV"
+
+      - name: Populate rootfs
+        run: |
+          LOOP="${{ env.LOOP }}"
+          sudo mkdir -p /mnt/rootfs /mnt/efi
+          sudo mount "${LOOP}p3" /mnt/rootfs
+          sudo mount "${LOOP}p2" /mnt/efi
+
+          # 解压 rootfs，保留完整权限和符号链接
+          sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner
+          
+          # 放入把系统安装到硬盘的脚本
+          INSTALLER_SRC="${{ github.workspace }}/patch/install.sh"
+          if [ ! -f "$INSTALLER_SRC" ]; then
+            echo "ERROR: $INSTALLER_SRC 不存在"
+            exit 1
+          fi
+          # 放入安装脚本
+          sudo cp "${{ github.workspace }}/patch/debian-install-gpt" /mnt/rootfs/root/install.sh
+          sudo chmod 755 /mnt/rootfs/root/install.sh
+          sudo sed -i 's/\r$//' /mnt/rootfs/root/install.sh
+          
+          #替换apt为国内源sources.list
+          #sudo cp -a ${{ github.workspace }}/patch/sources.list /mnt/rootfs/etc/apt/
+
+          # 解压 modules 到临时目录
+          rm -rf /tmp/modules-extract
+          mkdir -p /tmp/modules-extract
+          sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /tmp/modules-extract
+
+          VERSION_DIR=$(sudo find /tmp/modules-extract -maxdepth 4 -type d -name "${KERNEL_VERSION}" -print -quit)
+          if [ -z "$VERSION_DIR" ]; then
+            echo "ERROR: 在 modules.tar.gz 中找不到 ${KERNEL_VERSION} 目录"
+            exit 1
+          fi
+          echo "找到模块目录: $VERSION_DIR"
+
+          sudo mkdir -p /mnt/rootfs/lib/modules
+          sudo rm -rf "/mnt/rootfs/lib/modules/${KERNEL_VERSION}"
+          sudo mv "$VERSION_DIR" "/mnt/rootfs/lib/modules/${KERNEL_VERSION}"
+
+          # 放置内核
+          sudo mkdir -p /mnt/rootfs/boot
+          sudo cp "$WORK_DIR/bzImage" "/mnt/rootfs/boot/vmlinuz-${KERNEL_VERSION}"
+
+      - name: Generate initramfs and install GRUB (chroot)
+        run: |
+          LOOP="${{ env.LOOP }}"
+          ROOTFS_UUID="${{ env.ROOTFS_UUID }}"
+          
+          # 提前在rootfs内创建EFI挂载点，避免后续挂载异常
+          sudo mkdir -p /mnt/rootfs/dev /mnt/rootfs/proc /mnt/rootfs/sys /mnt/rootfs/boot/efi
+          
+          # 标准bind挂载系统虚拟目录
+          sudo mount --bind /dev  /mnt/rootfs/dev
+          sudo mount --bind /proc /mnt/rootfs/proc
+          sudo mount --bind /sys  /mnt/rootfs/sys
+          # 把外部已挂载的EFI分区bind进chroot，彻底避免重复挂载冲突
+          sudo mount --bind /mnt/efi /mnt/rootfs/boot/efi
+
+          # 检查必要工具
+          if [ ! -x /mnt/rootfs/usr/sbin/update-initramfs ]; then
+            echo "ERROR: rootfs 中没有 update-initramfs"
+            exit 1
+          fi
+          if [ ! -x /mnt/rootfs/sbin/depmod ]; then
+            echo "ERROR: rootfs 中没有 depmod"
+            exit 1
+          fi
+
+          # 伪造内核 config
+          sudo tee "/mnt/rootfs/boot/config-${KERNEL_VERSION}" > /dev/null <<'EOF'
+          CONFIG_RD_GZIP=y
+          EOF
+
+          # 确保压缩方式为 gzip
+          sudo mkdir -p /mnt/rootfs/etc/initramfs-tools
+          echo "COMPRESS=gzip" | sudo tee /mnt/rootfs/etc/initramfs-tools/initramfs.conf
+
+          # depmod 和 initramfs
+          sudo chroot /mnt/rootfs /bin/bash -c "depmod -a ${KERNEL_VERSION}"
+          sudo chroot /mnt/rootfs /bin/bash -c "update-initramfs -c -k ${KERNEL_VERSION}"
+
+          if [ ! -f "/mnt/rootfs/boot/initrd.img-${KERNEL_VERSION}" ]; then
+            echo "ERROR: initramfs 生成失败"
+            exit 1
+          fi
+          echo "initramfs 生成成功"
+
+          # 写 fstab（LABEL+UUID双配置，双重兜底）
+          sudo tee /mnt/rootfs/etc/fstab > /dev/null <<EOF
+          LABEL=rootfs  /  ext4  errors=remount-ro  0  1
+          UUID=$ROOTFS_UUID  /  ext4  errors=remount-ro  0  1
+          EOF
+
+          # 安装 GRUB 软件包 (包含 i386-efi 支持)
+          echo "=== 安装 GRUB 软件包 ==="
+          sudo chroot /mnt/rootfs /bin/bash -c "
+            export DEBIAN_FRONTEND=noninteractive
+            export DEBCONF_NONINTERACTIVE_SEEN=true
+            apt-get update || true
+            apt-get install -y --no-install-recommends \
+              grub-pc grub-efi-amd64 grub-efi-ia32 \
+              parted dosfstools e2fsprogs rsync \
+              fake-hwclock systemd-timesyncd \
+              usbutils pciutils evtest kbd || true
+            apt-get clean && rm -rf /var/lib/apt/lists/*
+          "
+
+          # chroot 内安装 GRUB (BIOS + 64-bit EFI + 32-bit EFI)
+          echo "=== chroot 内安装 GRUB ==="
+          sudo chroot /mnt/rootfs /bin/bash -c "
+            # 加--force强制写入loop设备的BIOS Boot分区，避免grub-install跳过
+            grub-install --target=i386-pc --recheck --force ${LOOP} || true
+            grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true
+            grub-install --target=i386-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true
+          "
+
+          # 如果 chroot 失败，宿主机回退（BIOS 模式）
+          if [ ! -f /mnt/rootfs/boot/grub/i386-pc/normal.mod ]; then
+            echo "chroot grub-install 失败，使用宿主机 grub 回退 BIOS 部分"
+            sudo grub-install --target=i386-pc --boot-directory=/mnt/rootfs/boot "${LOOP}" || true
+          fi
+
+          # 手动写 grub.cfg，同时写入LABEL和UUID双根参数，彻底解决找不到rootfs的问题
+          echo "=== 写入 grub.cfg ==="
+          sudo mkdir -p /mnt/rootfs/boot/grub
+          sudo tee /mnt/rootfs/boot/grub/grub.cfg > /dev/null <<EOF
+          set default=0
+          set timeout=5
+
+          menuentry "Debian ${KERNEL_VERSION}" {
+              linux /boot/vmlinuz-${KERNEL_VERSION} root=LABEL=rootfs root=UUID=$ROOTFS_UUID rw quiet
+              initrd /boot/initrd.img-${KERNEL_VERSION}
+          }
+          EOF
+
+          # 把grub.cfg同步到所有EFI引导目录，避免部分主板读不到配置
+          sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/efi/EFI/debian/grub.cfg 2>/dev/null || true
+          sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/efi/EFI/BOOT/grub.cfg 2>/dev/null || true
+
+          # 确保 EFI 分区里有 fallback 引导文件 (关键！解决你的报错)
+          echo "=== 检查并复制 EFI 引导文件 ==="
+          sudo mkdir -p /mnt/efi/EFI/BOOT
+          # 如果生成的是 debian 目录，把它里面的内容复制一份到默认的 BOOT 目录
+          if [ -d /mnt/efi/EFI/debian ]; then
+            sudo cp -r /mnt/efi/EFI/debian/* /mnt/efi/EFI/BOOT/ 2>/dev/null || true
+            # 针对不同架构重命名 fallback 文件名
+            if [ -f /mnt/efi/EFI/BOOT/grubia32.efi ]; then
+              sudo cp /mnt/efi/EFI/BOOT/grubia32.efi /mnt/efi/EFI/BOOT/BOOTIA32.EFI
+            fi
+            if [ -f /mnt/efi/EFI/BOOT/grubx64.efi ]; then
+              sudo cp /mnt/efi/EFI/BOOT/grubx64.efi /mnt/efi/EFI/BOOT/BOOTX64.EFI
+            fi
+          fi
+          
+          echo "=== 最终的 EFI 目录结构 ==="
+          sudo find /mnt/efi/EFI -type f
+
+          # 按顺序卸载所有bind挂载，避免设备忙
+          sudo umount /mnt/rootfs/boot/efi || true
+          sudo umount /mnt/rootfs/dev  || true
+          sudo umount /mnt/rootfs/proc || true
+          sudo umount /mnt/rootfs/sys  || true
+
+      - name: Cleanup and unmount
+        run: |
+          LOOP="${{ env.LOOP }}"
+          sudo umount /mnt/rootfs || true
+          sudo umount /mnt/efi || true
+          sudo losetup -d "$LOOP" || true
+
+      - name: Compress image
+        run: |
+          cd "$WORK_DIR"
+          gzip -9 -k "$IMG_FILE"
+          ls -lh
+          ( cd "$WORK_DIR" && sha256sum debian-rootfs.img.gz > debian-rootfs.img.gz.sha256 )
+
+      - name: Create Release and upload
+        uses: ncipollo/release-action@v1
+        with:
+          tag: image-debian-latest
+          name: image-debian-latest
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: |
+            ${{ env.WORK_DIR }}/debian-rootfs.img.gz
+            ${{ env.WORK_DIR }}/debian-rootfs.img.gz.sha256
+          body: |
+            可启动 Debian IMG（支持 32位/64位 UEFI + BIOS 启动）
+            分区表为GPT
+            内核：${{ env.KERNEL_VERSION }}
+            rootfs：Debian bookworm + SSH/FTP/Nginx/PHP8
+            初始 root 密码：`1234`（首次 SSH 登录强制改密）
+
+            ## 写入 U 盘或硬盘
+
+            先确认目标设备（把 `sdX` 换成实际盘符，如 `sdb`）：
+            ```bash
+            lsblk -o NAME,SIZE,MODEL,TRAN,MOUNTPOINT
+            sudo umount /dev/sdX?* 2>/dev/null || true
+            gunzip -c debian-rootfs.img.gz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+            sudo sync
+            
+            ## 将系统安装到机器硬盘（U盘启动后运行）
+            ```bash
+            sudo sh /root/install.sh
