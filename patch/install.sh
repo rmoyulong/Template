@@ -1,4 +1,19 @@
 #!/bin/bash
+# ---- 依赖自检 ----
+MISSING=()
+for cmd in parted mkfs.ext4 mkfs.vfat rsync blkid grub-install; do
+  command -v "$cmd" >/dev/null 2>&1 || MISSING+=("$cmd")
+done
+if [ ${#MISSING[@]} -gt 0 ]; then
+  echo "缺少命令: ${MISSING[*]}，尝试自动安装..."
+  apt-get update && apt-get install -y \
+    parted dosfstools e2fsprogs rsync grub-pc-bin grub-efi-amd64-bin grub-common
+  # 安装后复检
+  for cmd in "${MISSING[@]}"; do
+    command -v "$cmd" >/dev/null 2>&1 || { echo "仍然缺少: $cmd，请检查网络/软件源"; exit 1; }
+  done
+fi
+# ---- 以下是原有逻辑 ----
 set -euo pipefail
 
 # 必须以 root 运行
