@@ -1,5 +1,9 @@
-name: 编译Bootable IMG (MBR兼容版)
-
+name: 编译Bootable IMG (MBR兼容版)-MBR
+### 这次的区别：
+#1. **分区表用 MBR**：老 BIOS 能识别。
+#2. **两个分区**：`p1` 是 FAT32（给主板认 EFI 文件用），`p2` 是 EXT4（用来装 rootfs，解决所有的解压报错）。
+#3. **GRUB 写入**：BIOS 写 MBR，32 位和 64 位 UEFI 写入 FAT32 分区，并额外复制一份改名为 `BOOTIA32.EFI` 放在 `EFI/BOOT/` 兜底。
+#这个方案既能启动 Linux，又照顾了 Bay Trail 老主板。
 on:
   workflow_dispatch:
   push:
@@ -182,7 +186,8 @@ jobs:
             ${{ env.WORK_DIR }}/debian-rootfs.img.gz
             ${{ env.WORK_DIR }}/debian-rootfs.img.gz.sha256
           body: |
-            Debian IMG (MBR兼容版)
+            Debian IMG (MBR兼容版)）
+            分区表为MBR
             初始 root 密码：`1234`
             
             ## 写入 U 盘或硬盘
