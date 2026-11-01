@@ -1,0 +1,190 @@
+name: 编译Bootable IMG (极简兼容版)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'img-*'
+
+permissions:
+  contents: write
+
+env:
+  KERNEL_VERSION: '6.12.115'
+  IMG_SIZE_MB: 4096
+  WORK_DIR: ${{ github.workspace }}/work
+  IMG_FILE: ${{ github.workspace }}/work/debian-rootfs.img
+  ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-bookworm-latest/rootfs.tar.gz
+  MODULES_URL: https://github.com/rmoyulong/Template/releases/download/kernel-modules-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8/modules.tar.gz
+  BZIMAGE_URL: https://github.com/rmoyulong/Template/releases/download/kernel-image-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8/bzImage
+
+jobs:
+  build-img:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget parted e2fsprogs dosfstools mtools xorriso rsync \
+            grub-pc-bin grub-efi-amd64-bin grub-efi-ia32-bin grub-common
+
+      - name: Download files
+        run: |
+          mkdir -p "$WORK_DIR"
+          cd "$WORK_DIR"
+          wget -q -O rootfs.tar.gz "$ROOTFS_URL"
+          wget -q -O modules.tar.gz "$MODULES_URL"
+          wget -q -O bzImage "$BZIMAGE_URL"
+
+      - name: Create disk image (MBR + FAT32)
+        run: |
+          cd "$WORK_DIR"
+          dd if=/dev/zero of="$IMG_FILE" bs=1M count=$IMG_SIZE_MB status=progress
+
+          # 注意这里使用 msdos 分区表 (MBR)，老主板兼容性最好
+          parted -s "$IMG_FILE" mklabel msdos
+          parted -s "$IMG_FILE" mkpart primary fat32 1MiB 100%
+          parted -s "$IMG_FILE" set 1 boot on
+
+          LOOP=$(sudo losetup --find --show --partscan "$IMG_FILE")
+          echo "LOOP=$LOOP" >> "$GITHUB_ENV"
+          sleep 2
+
+          # 直接格式化为 FAT32，不需要 ext4
+          sudo mkfs.vfat -F32 "${LOOP}p1"
+
+      - name: Populate rootfs
+        run: |
+          LOOP="${{ env.LOOP }}"
+          sudo mkdir -p /mnt/rootfs
+          sudo mount "${LOOP}p1" /mnt/rootfs
+
+          sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner
+
+          # 放安装脚本
+          INSTALLER_SRC="${{ github.workspace }}/patch/install.sh"
+          if [ -f "$INSTALLER_SRC" ]; then
+            sudo mkdir -p /mnt/rootfs/root
+            sudo cp "$INSTALLER_SRC" /mnt/rootfs/root/install.sh
+            sudo chmod 755 /mnt/rootfs/root/install.sh
+            sudo sed -i 's/\r$//' /mnt/rootfs/root/install.sh
+          fi
+
+          # 解压 modules
+          rm -rf /tmp/modules-extract
+          mkdir -p /tmp/modules-extract
+          sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /tmp/modules-extract
+          VERSION_DIR=$(sudo find /tmp/modules-extract -maxdepth 4 -type d -name "${KERNEL_VERSION}" -print -quit)
+          sudo mkdir -p /mnt/rootfs/lib/modules
+          sudo mv "$VERSION_DIR" "/mnt/rootfs/lib/modules/${KERNEL_VERSION}"
+
+          # 内核
+          sudo mkdir -p /mnt/rootfs/boot
+          sudo cp "$WORK_DIR/bzImage" "/mnt/rootfs/boot/vmlinuz-${KERNEL_VERSION}"
+
+          # fstab: 直接让 / 挂载在 sda1 上
+          sudo tee /mnt/rootfs/etc/fstab > /dev/null <<'EOF'
+          /dev/sda1  /  vfat  defaults  0  1
+          EOF
+
+      - name: Install GRUB (极简模式)
+        run: |
+          LOOP="${{ env.LOOP }}"
+          sudo mount --bind /dev /mnt/rootfs/dev
+          sudo mount --bind /proc /mnt/rootfs/proc
+          sudo mount --bind /sys /mnt/rootfs/sys
+
+          echo "=== 在 chroot 中安装 GRUB 到 FAT32 引导区 ==="
+          sudo chroot /mnt/rootfs /bin/bash -c "
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update || true
+            apt-get install -y grub-pc grub-efi-amd64 grub-efi-ia32 || true
+            
+            # 强制安装 BIOS 模式（由于是单 FAT32 分区，需要 embed）
+            grub-install --target=i386-pc --recheck ${LOOP} || true
+            
+            # 安装 32 位和 64 位 EFI 模式
+            grub-install --target=x86_64-efi --efi-directory=/ --boot-directory=/boot --bootloader-id=debian --recheck || true
+            grub-install --target=i386-efi --efi-directory=/ --boot-directory=/boot --bootloader-id=debian --recheck || true
+          "
+
+          echo "=== 写入 grub.cfg ==="
+          sudo mkdir -p /mnt/rootfs/boot/grub
+          sudo tee /mnt/rootfs/boot/grub/grub.cfg > /dev/null <<EOF
+          set default=0
+          set timeout=5
+
+          menuentry "Debian Linux" {
+              # 注意：这里去掉了 initrd，内核直接挂载 sda1 为 vfat 根目录
+              linux /boot/vmlinuz-${KERNEL_VERSION} root=/dev/sda1 rw rootfstype=vfat quiet
+          }
+          EOF
+
+          # 复制配置文件到 EFI 目录，确保都能读到
+          sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/rootfs/EFI/BOOT/grub.cfg 2>/dev/null || true
+          sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/rootfs/grub/grub.cfg 2>/dev/null || true
+
+          # 强制确保 fallback 文件名存在
+          sudo mkdir -p /mnt/rootfs/EFI/BOOT
+          for arch in i386 x86_64; do
+            if [ -f "/mnt/rootfs/EFI/debian/grub${arch}.efi" ]; then
+              if [ "$arch" = "i386" ]; then
+                sudo cp "/mnt/rootfs/EFI/debian/grub${arch}.efi" "/mnt/rootfs/EFI/BOOT/BOOTIA32.EFI"
+              else
+                sudo cp "/mnt/rootfs/EFI/debian/grub${arch}.efi" "/mnt/rootfs/EFI/BOOT/BOOTX64.EFI"
+              fi
+            fi
+          done
+
+          echo "=== 检查 EFI/BOOT 下是否有文件 ==="
+          sudo ls -la /mnt/rootfs/EFI/BOOT/ || true
+
+          sudo umount /mnt/rootfs/dev /mnt/rootfs/proc /mnt/rootfs/sys || true
+
+      - name: Cleanup and Compress
+        run: |
+          LOOP="${{ env.LOOP }}"
+          sudo umount /mnt/rootfs || true
+          sudo losetup -d "$LOOP" || true
+          cd "$WORK_DIR"
+          gzip -9 -k "$IMG_FILE"
+          ( cd "$WORK_DIR" && sha256sum debian-rootfs.img.gz > debian-rootfs.img.gz.sha256 )
+
+      - name: Create Release and upload
+        uses: ncipollo/release-action@v1
+        with:
+          tag: image-debian-MBR-latest
+          name: image-debian-MBR-latest
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: |
+            ${{ env.WORK_DIR }}/debian-rootfs.img.gz
+            ${{ env.WORK_DIR }}/debian-rootfs.img.gz.sha256
+          body: |
+            可启动 Debian IMG (单分区极简兼容版)
+            分区表为MBR
+            内核：${{ env.KERNEL_VERSION }}
+            初始 root 密码：`1234`
+            
+            ## 写入 U 盘或硬盘
+            
+            先确认目标设备（把 `sdX` 换成实际盘符，如 `sdb`）：
+            ```bash
+            lsblk -o NAME,SIZE,MODEL,TRAN,MOUNTPOINT
+            sudo umount /dev/sdX?* 2>/dev/null || true
+            gunzip -c debian-rootfs.img.gz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+            sudo sync
+            
+            ## 将系统安装到机器硬盘（U盘启动后运行）
+            ```bash
+            sudo sh /root/install.sh            
