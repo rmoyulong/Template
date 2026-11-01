@@ -83,7 +83,6 @@ jobs:
           sudo cp "${{ github.workspace }}/patch/debian-install-mbr.sh" /mnt/rootfs/root/install.sh
           sudo chmod 755 /mnt/rootfs/root/install.sh
           sudo sed -i 's/\r$//' /mnt/rootfs/root/install.sh
-i
         
           #替换apt为国内源sources.list
           #sudo cp -a ${{ github.workspace }}/patch/sources.list /mnt/rootfs/etc/apt/          
