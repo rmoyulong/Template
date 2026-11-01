@@ -258,6 +258,7 @@ jobs:
             sudo umount /dev/sdX?* 2>/dev/null || true
             gunzip -c debian-rootfs.img.gz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
             sudo sync
-            将系统安装到机器硬盘（U盘启动后运行）
+            
+            ## 将系统安装到机器硬盘（U盘启动后运行）
             ```bash
             sudo sh /root/install.sh
