@@ -89,7 +89,7 @@ jobs:
           fi
         
           #替换apt为国内源sources.list
-          sudo cp -a "${{ github.workspace }}/patch/sources.list /mnt/rootfs/etc/apt/          
+          sudo cp -a ${{ github.workspace }}/patch/sources.list /mnt/rootfs/etc/apt/          
 
           # 解压 modules
           rm -rf /tmp/modules-extract
@@ -137,7 +137,8 @@ jobs:
             export DEBIAN_FRONTEND=noninteractive
             apt-get update || true
             apt-get install -y grub-pc grub-efi-amd64 grub-efi-ia32 \
-              parted dosfstools e2fsprogs rsync || true
+              parted dosfstools e2fsprogs rsync \
+              fake-hwclock systemd-timesyncd || true
             
             # BIOS 模式：写入 MBR，加--force强制写入loop设备，避免跳过
             grub-install --target=i386-pc --recheck --force $LOOP || true

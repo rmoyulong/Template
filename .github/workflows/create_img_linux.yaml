@@ -103,7 +103,7 @@ jobs:
           sudo ls -l /mnt/rootfs/root/install.sh
           
           #替换apt为国内源sources.list
-          sudo cp -a "${{ github.workspace }}/patch/sources.list /mnt/rootfs/etc/apt/
+          sudo cp -a ${{ github.workspace }}/patch/sources.list /mnt/rootfs/etc/apt/
 
           # 解压 modules 到临时目录
           rm -rf /tmp/modules-extract
@@ -181,8 +181,8 @@ jobs:
             export DEBIAN_FRONTEND=noninteractive
             apt-get update || true
             apt-get install -y grub-pc grub-efi-amd64 grub-efi-ia32 \
-              parted dosfstools e2fsprogs rsync || true
-
+              parted dosfstools e2fsprogs rsync \
+              fake-hwclock systemd-timesyncd || true
           "
 
           # chroot 内安装 GRUB (BIOS + 64-bit EFI + 32-bit EFI)
