@@ -78,14 +78,15 @@ jobs:
           # netplan 配置：DHCP 动态获取 IPv4
           sudo mkdir -p "$ROOTFS_DIR/etc/netplan"
           sudo tee "$ROOTFS_DIR/etc/netplan/01-netcfg.yaml" > /dev/null <<'EOF'
-          network:
-            version: 2
-            renderer: networkd
-            ethernets:
-              eth0:
-                dhcp4: true
-                dhcp6: false
-                optional: true
+            network:
+              version: 2
+              renderer: networkd
+              ethernets:
+                all-eth:
+                  match:
+                    name: "en*"
+                  dhcp4: true
+                  dhcp6: true
           EOF
 
           # netplan 要求配置文件权限为 600
