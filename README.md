@@ -5,8 +5,8 @@
 [![build](https://img.shields.io/github/actions/workflow/status/rmoyulong/Template/Armbian.yml)](https://github.com/rmoyulong/Template/actions/workflows/Armbian.yml) [![downloads](https://img.shields.io/github/downloads/rmoyulong/Template/total)](https://github.com/rmoyulong/Template/releases) [![downloads@latest](https://img.shields.io/github/downloads/rmoyulong/Template/latest/total)](https://github.com/rmoyulong/Template/releases/latest)<br>
 
 ## 编译示例
-- &zwnj;**例子 3**&zwnj;：红米ax6、ax3600固件编译<br>
-- &zwnj;**例子 3**&zwnj;：使用https://github.com/armbian/build 编译玩客云 armbian 线刷和卡刷固件<br>
+- &zwnj;**例子 1**&zwnj;：红米ax6、ax3600固件编译<br>
+- &zwnj;**例子 2**&zwnj;：使用https://github.com/armbian/build 编译玩客云 armbian 线刷和卡刷固件<br>
 - &zwnj;**例子 3**&zwnj;：使用https://www.kernel.org/  编译 j1900 & j1800 卡刷 debian 固件
 ## GPT 与 MBR 镜像启动兼容性对比清单
 这份清单结合老主板实测场景整理，能帮你快速判断不同硬件该选哪一个镜像版本，避免启动失败。
