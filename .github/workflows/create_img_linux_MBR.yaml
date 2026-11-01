@@ -87,6 +87,9 @@ jobs:
             sudo chmod 755 /mnt/rootfs/root/install.sh
             sudo sed -i 's/\r$//' /mnt/rootfs/root/install.sh
           fi
+        
+          #替换apt为国内源sources.list
+          sudo cp -a "${{ github.workspace }}/patch/sources.list /mnt/rootfs/etc/apt/          
 
           # 解压 modules
           rm -rf /tmp/modules-extract
@@ -133,7 +136,8 @@ jobs:
           sudo chroot /mnt/rootfs /bin/bash -c "
             export DEBIAN_FRONTEND=noninteractive
             apt-get update || true
-            apt-get install -y grub-pc grub-efi-amd64 grub-efi-ia32 || true
+            apt-get install -y grub-pc grub-efi-amd64 grub-efi-ia32 \
+              parted dosfstools e2fsprogs rsync || true
             
             # BIOS 模式：写入 MBR，加--force强制写入loop设备，避免跳过
             grub-install --target=i386-pc --recheck --force $LOOP || true
