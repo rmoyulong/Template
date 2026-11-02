@@ -6,6 +6,11 @@
 #       6.12 起 PREEMPT_RT 已并入主线，无需额外打补丁。
 #       凡是不可能被 Kconfig 识别、或与 6.12 符号名不符的写法，都已在下方修正。
 #
+#j1900andj1800-RT和j1900andj1800两份 config 的差异（严格只有 3 处）
+#    j1900andj1800-RT                   j1900andj1800
+#- CONFIG_LOCALVERSION="-rt"        + CONFIG_LOCALVERSION=""
+#- CONFIG_PREEMPT_RT=y              + CONFIG_PREEMPT_DYNAMIC=y
+#- CONFIG_IRQ_FORCED_THREADING=y    （普通版不写，由内核按需自动选）
 
 #
 # ---- 1. 架构与抢占模型 ----

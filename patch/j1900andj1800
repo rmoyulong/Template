@@ -8,6 +8,11 @@
 #         开启 CONFIG_PREEMPT_DYNAMIC（可用 preempt=full/voluntary/none 运行时切换）
 #       其余全部一致，交由 make olddefconfig 自动补全依赖。
 #
+#j1900andj1800-RT和j1900andj1800两份 config 的差异（严格只有 3 处）
+#    j1900andj1800-RT                   j1900andj1800
+#- CONFIG_LOCALVERSION="-rt"        + CONFIG_LOCALVERSION=""
+#- CONFIG_PREEMPT_RT=y              + CONFIG_PREEMPT_DYNAMIC=y
+#- CONFIG_IRQ_FORCED_THREADING=y    （普通版不写，由内核按需自动选）
 
 #
 # ---- 1. 架构与抢占模型 ----
