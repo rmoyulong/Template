@@ -1,4 +1,5 @@
 name: 编译Bootable IMG (MBR兼容版)-MBR
+
 on:
   workflow_dispatch:
   push:
@@ -10,7 +11,8 @@ permissions:
 
 env:
   KERNEL_VERSION: '6.12.115'
-  IMG_SIZE_MB: 4096
+  # 从 4096 提升到 6144，给 rootfs + 运行期 apt 留足空间，避免写满产生半截缓存
+  IMG_SIZE_MB: 6144
   WORK_DIR: ${{ github.workspace }}/work
   IMG_FILE: ${{ github.workspace }}/work/debian-rootfs-mbr.img
   ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-bookworm-latest/rootfs.tar.gz
@@ -44,6 +46,7 @@ jobs:
           wget -q -O rootfs.tar.gz "$ROOTFS_URL"
           wget -q -O modules.tar.gz "$MODULES_URL"
           wget -q -O bzImage "$BZIMAGE_URL"
+          ls -lh
 
       - name: Create disk image (MBR + EFI + EXT4)
         run: |
@@ -61,13 +64,15 @@ jobs:
           LOOP=$(sudo losetup --find --show --partscan "$IMG_FILE")
           echo "LOOP=$LOOP" >> "$GITHUB_ENV"
           sleep 2
+          lsblk "$LOOP"
 
           sudo mkfs.vfat -F32 "${LOOP}p1"
           sudo mkfs.ext4 -F -L rootfs "${LOOP}p2"
-          
-          # 提前导出根分区UUID，后续直接写入grub.cfg做兜底
+
+          # 提前导出根分区 UUID，写入 grub.cfg / fstab 做双保险
           ROOTFS_UUID=$(sudo blkid -s UUID -o value "${LOOP}p2")
           echo "ROOTFS_UUID=$ROOTFS_UUID" >> "$GITHUB_ENV"
+          echo "根分区 UUID: $ROOTFS_UUID"
 
       - name: Populate rootfs
         run: |
@@ -79,81 +84,127 @@ jobs:
           # 解压到 EXT4 分区，不再报 symlink/权限 错误
           sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner
 
-          # 放入安装脚本
-          sudo cp "${{ github.workspace }}/patch/debian-install-mbr.sh" /mnt/rootfs/root/install.sh
-          sudo chmod 755 /mnt/rootfs/root/install.sh
-          sudo sed -i 's/\r$//' /mnt/rootfs/root/install.sh
-          
-          sudo cp "${{ github.workspace }}/patch/debian-install-mbr-plus.sh" /mnt/rootfs/root/install-plus.sh
-          sudo chmod 755 /mnt/rootfs/root/install-plus.sh
-          sudo sed -i 's/\r$//' /mnt/rootfs/root/install-plus.sh          
-        
-          #替换apt为国内源sources.list
-          #sudo cp -a ${{ github.workspace }}/patch/sources.list /mnt/rootfs/etc/apt/          
+          # 清掉 rootfs 中可能残留的损坏 apt 缓存（避免烧录后 apt 解析报错）
+          sudo rm -rf /mnt/rootfs/var/lib/apt/lists/* || true
+
+          # 放入安装脚本（MBR 版，两份）
+          #   /root/install.sh      ← patch/install-mbr.sh       （rsync 当前系统整机到目标盘）
+          #   /root/install-plus.sh ← patch/install-mbr-plus.sh  （解压 /root/rootfs.tar.gz）
+          sudo mkdir -p /mnt/rootfs/root
+          sudo chmod 700 /mnt/rootfs/root
+          for pair in \
+            "${{ github.workspace }}/patch/install-mbr.sh:/mnt/rootfs/root/install.sh" \
+            "${{ github.workspace }}/patch/install-mbr-plus.sh:/mnt/rootfs/root/install-plus.sh"; do
+            src="${pair%%:*}"; dst="${pair##*:}"
+            if [ -f "$src" ]; then
+              sudo cp "$src" "$dst"
+              sudo chmod 755 "$dst"
+              sudo sed -i 's/\r$//' "$dst"
+              echo "=== 已放入 $dst（来源：$src） ==="
+            else
+              echo "WARN: $src 不存在，跳过"
+            fi
+          done
+          sudo ls -l /mnt/rootfs/root/ || true
 
           # 解压 modules
           rm -rf /tmp/modules-extract
           mkdir -p /tmp/modules-extract
           sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /tmp/modules-extract
           VERSION_DIR=$(sudo find /tmp/modules-extract -maxdepth 4 -type d -name "${KERNEL_VERSION}" -print -quit)
+          if [ -z "$VERSION_DIR" ]; then
+            echo "ERROR: 在 modules.tar.gz 中找不到 ${KERNEL_VERSION} 目录"
+            exit 1
+          fi
+          echo "找到模块目录: $VERSION_DIR"
           sudo mkdir -p /mnt/rootfs/lib/modules
+          sudo rm -rf "/mnt/rootfs/lib/modules/${KERNEL_VERSION}"
           sudo mv "$VERSION_DIR" "/mnt/rootfs/lib/modules/${KERNEL_VERSION}"
 
           # 内核
           sudo mkdir -p /mnt/rootfs/boot
           sudo cp "$WORK_DIR/bzImage" "/mnt/rootfs/boot/vmlinuz-${KERNEL_VERSION}"
+          ls -lh "/mnt/rootfs/boot/vmlinuz-${KERNEL_VERSION}"
 
       - name: Generate initramfs and install GRUB
         run: |
           LOOP="${{ env.LOOP }}"
           ROOTFS_UUID="${{ env.ROOTFS_UUID }}"
-          
-          # 提前在rootfs内创建必要的挂载点，避免chroot内挂载冲突
+
           sudo mkdir -p /mnt/rootfs/dev /mnt/rootfs/proc /mnt/rootfs/sys /mnt/rootfs/boot/efi
-          
-          sudo mount --bind /dev /mnt/rootfs/dev
+          sudo mount --bind /dev  /mnt/rootfs/dev
           sudo mount --bind /proc /mnt/rootfs/proc
-          sudo mount --bind /sys /mnt/rootfs/sys
-          # 直接把外部已挂载的EFI分区bind进chroot，避免重复挂载
+          sudo mount --bind /sys  /mnt/rootfs/sys
+          # EFI 分区直接 bind 进 chroot，避免 chroot 内重复挂载冲突
           sudo mount --bind /mnt/efi /mnt/rootfs/boot/efi
 
           # 伪造 config 以生成 initramfs
           sudo tee "/mnt/rootfs/boot/config-${KERNEL_VERSION}" > /dev/null <<'EOF'
           CONFIG_RD_GZIP=y
           EOF
+          sudo mkdir -p /mnt/rootfs/etc/initramfs-tools
           echo "COMPRESS=gzip" | sudo tee /mnt/rootfs/etc/initramfs-tools/initramfs.conf
-          
+
           sudo chroot /mnt/rootfs /bin/bash -c "depmod -a ${KERNEL_VERSION}"
           sudo chroot /mnt/rootfs /bin/bash -c "update-initramfs -c -k ${KERNEL_VERSION}"
+          if [ ! -f "/mnt/rootfs/boot/initrd.img-${KERNEL_VERSION}" ]; then
+            echo "ERROR: initramfs 生成失败"
+            exit 1
+          fi
+          echo "initramfs 生成成功"
 
-          # fstab 同时写入LABEL和UUID，双重兜底
+          # fstab：LABEL + UUID 双配置兜底
           sudo tee /mnt/rootfs/etc/fstab > /dev/null <<EOF
           LABEL=rootfs  /  ext4  errors=remount-ro  0  1
-          UUID=$ROOTFS_UUID  /  ext4  errors=remount-ro  0  1
+          UUID=${ROOTFS_UUID}  /  ext4  errors=remount-ro  0  1
           EOF
 
-          # 安装 GRUB，全程避免重复挂载冲突
-          sudo chroot /mnt/rootfs /bin/bash -c "
-            export DEBIAN_FRONTEND=noninteractive
-            export DEBCONF_NONINTERACTIVE_SEEN=true
-            apt-get update || true
-            apt-get install -y --no-install-recommends \
-              grub-pc grub-efi-amd64 grub-efi-ia32 \
-              parted dosfstools e2fsprogs rsync \
-              fake-hwclock systemd-timesyncd \
-              usbutils pciutils evtest kbd || true
-            apt-get clean && rm -rf /var/lib/apt/lists/*
+          # 安装 GRUB 及运行期必备工具
+          # 强制非交互：避免 debconf Dialog 回退 Readline 后在 chroot 里卡死
+          sudo chroot /mnt/rootfs /usr/bin/env \
+            DEBIAN_FRONTEND=noninteractive \
+            DEBCONF_NONINTERACTIVE_SEEN=true \
+            bash -c '
+              apt-get update || true
+              apt-get install -y --no-install-recommends \
+                grub-pc grub-efi-amd64 grub-efi-ia32 \
+                parted dosfstools e2fsprogs rsync \
+                fake-hwclock systemd-timesyncd \
+                usbutils pciutils evtest kbd || true
+              apt-get clean
+              rm -rf /var/lib/apt/lists/*
+            '
 
-            
-            # BIOS 模式：写入 MBR，加--force强制写入loop设备，避免跳过
-            grub-install --target=i386-pc --recheck --force $LOOP || true
-            
-            # UEFI 模式：直接用已bind好的/boot/efi，不再重复mount
+          # 启用开机校时（工控板 RTC 掉电后时间复位，靠这两者兜底）
+          sudo chroot /mnt/rootfs systemctl enable systemd-timesyncd || true
+          sudo chroot /mnt/rootfs systemctl enable fake-hwclock || true
+
+          # 安装 GRUB：BIOS 写 MBR，64/32 位 UEFI 写 EFI 分区
+          # --force 确保在 loop 设备上也把引导代码写入 MBR
+          sudo chroot /mnt/rootfs /bin/bash -c "
+            grub-install --target=i386-pc --recheck --force ${LOOP} || true
             grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true
-            grub-install --target=i386-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true
+            grub-install --target=i386-efi  --efi-directory=/boot/efi --bootloader-id=debian --recheck || true
           "
 
-          # 确保 fallback BOOTIA32.EFI 存在 (针对 Bay Trail)
+          # chroot 失败则宿主机回退（BIOS 部分）
+          if [ ! -f /mnt/rootfs/boot/grub/i386-pc/normal.mod ]; then
+            echo "chroot grub-install 失败，宿主机回退 BIOS 部分"
+            sudo grub-install --target=i386-pc --boot-directory=/mnt/rootfs/boot --force "${LOOP}" || true
+          fi
+
+          # 手写 grub.cfg（LABEL + UUID 双根参数，彻底解决找不到 rootfs 标签）
+          sudo mkdir -p /mnt/rootfs/boot/grub
+          sudo tee /mnt/rootfs/boot/grub/grub.cfg > /dev/null <<EOF
+          set default=0
+          set timeout=5
+          menuentry "Debian Linux" {
+              linux /boot/vmlinuz-${KERNEL_VERSION} root=LABEL=rootfs root=UUID=${ROOTFS_UUID} rw quiet
+              initrd /boot/initrd.img-${KERNEL_VERSION}
+          }
+          EOF
+
+          # fallback 引导文件（Bay Trail 32 位 UEFI 兜底）
           sudo mkdir -p /mnt/efi/EFI/BOOT
           if [ -f /mnt/efi/EFI/debian/grubia32.efi ]; then
             sudo cp /mnt/efi/EFI/debian/grubia32.efi /mnt/efi/EFI/BOOT/BOOTIA32.EFI
@@ -162,25 +213,18 @@ jobs:
             sudo cp /mnt/efi/EFI/debian/grubx64.efi /mnt/efi/EFI/BOOT/BOOTX64.EFI
           fi
 
-          # 写 grub.cfg，同时加入LABEL和UUID双根参数，彻底解决找不到rootfs的问题
-          sudo mkdir -p /mnt/rootfs/boot/grub
-          sudo tee /mnt/rootfs/boot/grub/grub.cfg > /dev/null <<EOF
-          set default=0
-          set timeout=5
-          menuentry "Debian Linux" {
-              linux /boot/vmlinuz-${KERNEL_VERSION} root=LABEL=rootfs root=UUID=$ROOTFS_UUID rw quiet
-              initrd /boot/initrd.img-${KERNEL_VERSION}
-          }
-          EOF
-
-          # 复制 grub.cfg 到所有EFI引导目录
+          # grub.cfg 同步到所有 EFI 引导目录
           sudo mkdir -p /mnt/efi/EFI/debian
           sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/efi/EFI/debian/grub.cfg 2>/dev/null || true
           sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/efi/EFI/BOOT/grub.cfg 2>/dev/null || true
 
-          # 按顺序卸载所有bind挂载，避免设备忙
+          echo "=== 最终 EFI 目录结构 ==="
+          sudo find /mnt/efi/EFI -type f || true
+
           sudo umount /mnt/rootfs/boot/efi || true
-          sudo umount /mnt/rootfs/dev /mnt/rootfs/proc /mnt/rootfs/sys || true
+          sudo umount /mnt/rootfs/dev  || true
+          sudo umount /mnt/rootfs/proc || true
+          sudo umount /mnt/rootfs/sys  || true
 
       - name: Cleanup and Compress
         run: |
@@ -190,7 +234,8 @@ jobs:
           sudo losetup -d "$LOOP" || true
           cd "$WORK_DIR"
           gzip -9 -k "$IMG_FILE"
-          ( cd "$WORK_DIR" && sha256sum debian-rootfs-mbr.img.gz > debian-rootfs-mbr.img.gz.sha256 )
+          sha256sum debian-rootfs-mbr.img.gz > debian-rootfs-mbr.img.gz.sha256
+          ls -lh
 
       - name: Create Release and upload
         uses: ncipollo/release-action@v1
@@ -203,19 +248,35 @@ jobs:
             ${{ env.WORK_DIR }}/debian-rootfs-mbr.img.gz
             ${{ env.WORK_DIR }}/debian-rootfs-mbr.img.gz.sha256
           body: |
-            Debian IMG (MBR兼容版)
-            分区表为MBR
-            初始 root 密码：`1234`
-            
+            Debian IMG（MBR 兼容版）
+            分区表为 MBR，支持老 BIOS / 32 位 UEFI / 64 位 UEFI
+            内核：${{ env.KERNEL_VERSION }}
+            初始 root 密码：1234
+
             ## 写入 U 盘或硬盘
-            
-            先确认目标设备（把 `sdX` 换成实际盘符，如 `sdb`）：
+
+            先确认目标设备（把 sdX 换成实际盘符，如 sdb）：
             ```bash
             lsblk -o NAME,SIZE,MODEL,TRAN,MOUNTPOINT
             sudo umount /dev/sdX?* 2>/dev/null || true
             gunzip -c debian-rootfs-mbr.img.gz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
             sudo sync
-            
-            ## 将系统安装到机器硬盘（U盘启动后运行）
+            ```
+
+            ## 将系统安装到机器硬盘（U 盘启动后运行）
+
+            镜像内已提供两份安装脚本：
+
+            1) rsync 版：直接把当前 U 盘系统整机同步到内部硬盘
             ```bash
-            sudo sh /root/install.sh            
+            sudo sh /root/install.sh
+            ```
+
+            2) rootfs.tar.gz 版：先把 rootfs.tar.gz 放到 U 盘系统的 /root/
+            ```bash
+            sudo sh /root/install-plus.sh
+            # 也可显式指定压缩包路径：
+            # sudo sh /root/install-plus.sh /path/to/rootfs.tar.gz
+            ```
+
+            两者都会从当前 U 盘系统补入内核与 modules；

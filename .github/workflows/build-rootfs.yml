@@ -57,7 +57,7 @@ jobs:
           sudo debootstrap \
             --arch=amd64 \
             --variant=minbase \
-            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64 \
+            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools \
             "$DEBIAN_SUITE" "$ROOTFS_DIR" \
             http://mirrors.tuna.tsinghua.edu.cn/debian/
 
@@ -131,6 +131,9 @@ jobs:
           sudo chroot "$ROOTFS_DIR" systemctl enable systemd-networkd-wait-online || true
           sudo chroot "$ROOTFS_DIR" systemctl enable systemd-resolved            || true
           sudo chroot "$ROOTFS_DIR" systemctl enable nginx php8.2-fpm ssh vsftpd || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-timesyncd || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable fake-hwclock    || true
+
 
           # 首次开机生成 netplan 后端配置（可选，保险起见）
           sudo chroot "$ROOTFS_DIR" netplan generate || true
