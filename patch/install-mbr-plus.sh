@@ -4,7 +4,9 @@
 # rootfs 来源：/root/rootfs.tar.gz（可用第 1 个参数或环境变量 ROOTFS_TARBALL 指定）
 # 内核与 modules 来源：当前运行的 U 盘系统（/boot、/lib/modules），不使用 tar 内的
 # 三路 GRUB：BIOS(i386-pc) + 64 位 UEFI + 32 位 UEFI（兼容 J1800 这类 32 位 UEFI 老机器）
-#set -euo pipefail
+set -euo pipefail
+echo "use: bash /root/install.sh"
+echo "use: bash /root/install_plus.sh"
 
 # ---------- 0. 前置检查 ----------
 if [ "$(id -u)" -ne 0 ]; then
