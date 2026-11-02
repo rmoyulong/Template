@@ -1,103 +1,149 @@
 name: 构建 Linux 内核 - x86_64
 
 on:
-  workflow_dispatch:  # 允许在 Actions 页面手动触发
+  workflow_dispatch: # 允许在 Actions 页面手动触发
 
 env:
-  kernel_Version: 6.12.115
+  KERNEL_VERSION: 6.12.115
 
 jobs:
-  union_core:
-    name: ${{ matrix.config_type }} 固件编译
+  build_kernel:
+    name: ${{ matrix.config_type }} 编译
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         config_type:
           - 普通内核
-          - RT实时内核 
-
+          - RT实时内核
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # GitHub 免费 runner 磁盘约 14GB，编译内核（源码+产物）需 10GB 以上，
+      # 两个矩阵任务并行更容易爆盘，先腾空间
+      - name: 释放磁盘空间
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h
+
       - name: 安装构建依赖项
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libncurses-dev bison flex libssl-dev libelf-dev bc
+          sudo apt-get install -y build-essential libncurses-dev bison flex \
+            libssl-dev libelf-dev bc xz-utils cpio dwarves
 
       - name: 下载内核源码
         run: |
-          # 以 ${{ env.kernel_Version }} 为例，你可以替换成想要编译的版本号
-          wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{ env.kernel_Version }}.tar.xz
-          tar -xJf linux-${{ env.kernel_Version }}.tar.xz
-          cd linux-${{ env.kernel_Version }}
+          wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{ env.KERNEL_VERSION }}.tar.xz
+          tar -xJf linux-${{ env.KERNEL_VERSION }}.tar.xz
+          ls -d linux-${{ env.KERNEL_VERSION }}
 
       - name: 配置内核
-        working-directory: linux-${{ env.kernel_Version }}
+        working-directory: linux-${{ env.KERNEL_VERSION }}
         run: |
+          set -euo pipefail
+
+          # 选择对应的基础配置
           if [[ "${{ matrix.config_type }}" == "RT实时内核" ]]; then
-             # 基础配置（这已经是一个能启动的、功能较全的 x86_64-rt配置）
-            cp ${{ github.workspace }}/patch/j1900andj1800-RT kernel/.config
+            SRC="${{ github.workspace }}/patch/j1900andj1800-RT"
           else
-            # 基础配置（这已经是一个能启动的、功能较全的 x86_64 配置）
-            cp ${{ github.workspace }}/patch/j1900andj1800 kernel/.config 
-          fi  
-          
-          #让内核自动处理所有依赖关系
+            SRC="${{ github.workspace }}/patch/j1900andj1800"
+          fi
+
+          # 关键：.config 必须放在源码根目录，不能写成 kernel/.config。
+          # 若根目录没有 .config，make 会静默改用 x86_64_defconfig，配置形同作废。
+          test -f "$SRC" || { echo "::error::缺少配置文件 $SRC"; exit 1; }
+          cp -v "$SRC" ./.config
+
+          # 自动补齐依赖，并把写错的符号名打印出来（KCONFIG_WARN_UNKNOWN_SYMBOLS）
+          KCONFIG_WARN_UNKNOWN_SYMBOLS=1 make olddefconfig
+
+          # 禁用证书相关选项，避免构建时报签名错误
+          scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
+          scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
+          scripts/config --disable MODULE_SIG_ALL
+          scripts/config --disable MODULE_SIG_FORCE
+
           make olddefconfig
-          # 禁用导致报错的证书选项
-          scripts/config --disable SYSTEM_TRUSTED_KEYS
-          scripts/config --disable SYSTEM_REVOCATION_KEYS
-          
-          make olddefconfig
-    
+
+          # ---- 配置自检（放在 olddefconfig 之后，精简配置也能通过）----
+          LINES=$(grep -c '^CONFIG_' .config || true)
+          echo "生效的 CONFIG_ 条目数: $LINES"
+          if [ "$LINES" -lt 2000 ]; then
+            echo "::error::.config 条目数异常，配置可能没有生效"
+            exit 1
+          fi
+
+          echo "==================== 关键配置自检 ===================="
+          for k in CONFIG_LOCALVERSION CONFIG_PREEMPT CONFIG_PREEMPT_RT CONFIG_HZ \
+                   CONFIG_SOUND CONFIG_SND CONFIG_SND_PCI CONFIG_SND_HDA_INTEL \
+                   CONFIG_SND_SST_ATOM_HIFI2_PLATFORM_ACPI CONFIG_HDMI_LPE_AUDIO \
+                   CONFIG_NET CONFIG_INET CONFIG_EXT4_FS CONFIG_VFAT_FS \
+                   CONFIG_EFI CONFIG_USB_HID CONFIG_USB_STORAGE \
+                   CONFIG_R8169 CONFIG_IWLWIFI CONFIG_TCP_CONG_BBR CONFIG_DEFAULT_TCP_CONG; do
+            grep -E "^${k}=" .config || echo "  # ${k} is not set"
+          done
+          echo "====================================================="
+
       - name: 构建内核与模块
-        working-directory: linux-${{ env.kernel_Version }}
-        run: |
-          make -j$(nproc)
+        working-directory: linux-${{ env.KERNEL_VERSION }}
+        run: make -j$(nproc)
 
       - name: 将模块安装至暂存目录
-        working-directory: linux-${{ env.kernel_Version }}
+        working-directory: linux-${{ env.KERNEL_VERSION }}
         run: |
-          # 关键一步：把编译好的模块装到临时目录，而不是 /usr/lib/modules/
-          
-          #/usr/lib/modules/6.12.xxx，任务一结束就没了，你也拿不到。所以必须用 INSTALL_MOD_PATH 指定一个工作区内的临时路径modules-staging
+          # 装到工作区内的临时目录，而不是 /usr/lib/modules/
           mkdir -p ${{ github.workspace }}/modules-staging
           make INSTALL_MOD_PATH=${{ github.workspace }}/modules-staging modules_install
 
       - name: 打包内核模块
         run: |
-            cd ${{ github.workspace }}/modules-staging/lib/modules
-            sudo rm -f build source vmlinux System.map
-            sudo find . \( -name "*.o" -o -name "*.cmd" -o -name ".tmp_*" \) -delete
-            sudo find . -name "*.ko" -exec strip --strip-debug {} \;
-            sudo find . -name "*.ko" -exec objcopy --remove-section .BTF {} \;
-            sudo tar zcf ../modules.tar.gz .
-            ls -lh ../modules.tar.gz
-          
+          set -euo pipefail
+          cd ${{ github.workspace }}/modules-staging/lib/modules
+          # build / source 是符号链接，位于版本子目录内部，不是 lib/modules 根
+          KVER_DIR=$(ls -d */ | head -1)
+          KVER_DIR=${KVER_DIR%/}
+          echo "模块目录: $KVER_DIR"
+          sudo rm -f "$KVER_DIR/build" "$KVER_DIR/source" \
+                       "$KVER_DIR/vmlinux" "$KVER_DIR/System.map"
+          sudo find . \( -name "*.o" -o -name "*.cmd" -o -name ".tmp_*" \) -delete
+          sudo find . -name "*.ko" -exec strip --strip-debug {} \;
+          sudo find . -name "*.ko" -exec objcopy --remove-section .BTF {} \;
+          sudo tar zcf ../modules.tar.gz .
+          ls -lh ../modules.tar.gz
+
+      - name: 导出最终生效的 .config
+        working-directory: linux-${{ env.KERNEL_VERSION }}
+        run: cp -v .config "${{ github.workspace }}/config-${{ matrix.config_type }}.txt"
+
       - name: 上传内核镜像
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag:  kernel-image-${{ matrix.config_type }}
+          tag: kernel-image-${{ matrix.config_type }}
           body: |
             ====================🧊固件信息🧊=======================
             ➦ 💻 固件平台：x86-64-linux
             ➦ ⚽ 固件源码：https://cdn.kernel.org/
-            ➦ 🚀 内核版本：${{ env.kernel_Version }}
-          artifacts: linux-${{ env.kernel_Version }}/arch/x86/boot/bzImage
+            ➦ 🚀 内核版本：${{ env.KERNEL_VERSION }}
+            ➦ 📄 本包内含 bzImage 与最终生效的 .config（config-${{ matrix.config_type }}.txt）
+          artifacts: |
+            linux-${{ env.KERNEL_VERSION }}/arch/x86/boot/bzImage
+            ${{ github.workspace }}/config-${{ matrix.config_type }}.txt
 
       - name: 上传内核模块
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag:  kernel-modules-${{ matrix.config_type }}
+          tag: kernel-modules-${{ matrix.config_type }}
           body: |
             ====================🧊固件信息🧊=======================
             ➦ 💻 固件平台：x86-64-linux
             ➦ ⚽ 固件源码：https://cdn.kernel.org/
-            ➦ 🚀 内核版本：${{ env.kernel_Version }}
-          artifacts: ${{ github.workspace }}/modules-staging/lib/modules.tar.gz       
+            ➦ 🚀 内核版本：${{ env.KERNEL_VERSION }}
+          artifacts: ${{ github.workspace }}/modules-staging/lib/modules.tar.gz
