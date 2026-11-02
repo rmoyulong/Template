@@ -4,7 +4,7 @@
 # rootfs 来源：当前运行的 U 盘系统（rsync 同步 /）
 # 内核与 modules 来源：当前运行的 U 盘系统（/boot 的内核镜像、/lib/modules）
 # 三路 GRUB：BIOS(i386-pc) + 64 位 UEFI + 32 位 UEFI（兼容 J1800 这类 32 位 UEFI 老机器）
-set -euo pipefail
+#set -euo pipefail
 
 # ---------- 0. 前置检查 ----------
 if [ "$(id -u)" -ne 0 ]; then
