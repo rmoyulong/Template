@@ -101,6 +101,10 @@ jobs:
           BUILTIN=$(grep -c '=y$' .config || true)
           echo "编成模块(=m)的条目数: $MODCOUNT"
           echo "内建(=y)的条目数: $BUILTIN"
+          if [ "$MODCOUNT" -gt 0 ]; then
+            echo "---- =m 条目明细（全内建版应为 0；若非 0 说明有驱动漏改成 =y）----"
+            grep -E '^CONFIG_[A-Za-z0-9_]+=m$' .config | sed 's/^/    /' | head -40
+          fi
 
           if [ "${{ matrix.tag }}" = "rt-mod" ]; then
             # 模块化内核：=m 必须达到一定数量，否则说明片段没生效
