@@ -227,13 +227,12 @@ jobs:
             ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm
             ➦ 🔌 网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
             =========================================================
-
             **初始 root 密码：`1234`**
             首次通过 SSH 登录会强制要求修改密码；FTP 需在改密后才能登录。
-
+            
             若下载到的是 rootfs.tar.gz，直接解压：
               tar -xzf rootfs.tar.gz -C /目标分区
-
+              
             若下载到的是 rootfs.tar.gz.part-* 分片，先合并再校验：
               cat rootfs.tar.gz.part-* > rootfs.tar.gz
               sha256sum -c rootfs.tar.gz.sha256
