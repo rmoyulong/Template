@@ -59,7 +59,7 @@ jobs:
             --components="main non-free-firmware" \
             --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-iwlwifi,firmware-linux-free,firmware-intel-sound,firmware-linux-nonfree,firmware-misc-nonfree \
             "$DEBIAN_SUITE" "$ROOTFS_DIR" \
-            http://mirrors.tuna.tsinghua.edu.cn/debian/
+            http://deb.debian.org/debian
 
       - name: Configure APT sources
         run: |
