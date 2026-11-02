@@ -58,7 +58,7 @@ jobs:
           # ============================================================
           # 正确的配置流程：
           #   1) 先用 x86_64_defconfig 生成一份可启动、完整的基础配置
-          #      （官方维护的 x86_64 默认配置，约 8000+ 条目）
+          #      （官方维护的 x86_64 默认配置，约 1700 个 =y/=m 条目）
           #   2) 再用 merge_config.sh 在其基础上叠加我们的定制片段
           #      （自动处理依赖冲突）
           #   3) 关证书项，最后 olddefconfig 做一次依赖补齐
@@ -66,7 +66,7 @@ jobs:
           # 子系统整块没进来，条目数只有 1200+。
           # ============================================================
 
-          # 1) 从官方 x86_64 默认配置起步（~9000 条目，完整可启动）
+          # 1) 从官方 x86_64 默认配置起步（约 1700 个 =y/=m 条目，完整可启动）
           make x86_64_defconfig
           COUNT0=$(grep -c '^CONFIG_[A-Za-z0-9_]\+=' .config)
           echo "defconfig 条目数: $COUNT0"
@@ -84,10 +84,13 @@ jobs:
           KCONFIG_WARN_UNKNOWN_SYMBOLS=1 make olddefconfig
 
           # ---- 配置自检 ----
+          # 说明：x86_64_defconfig 本身约 1700 个 =y/=m 条目（其余是
+          # "# CONFIG_xxx is not set" 行，不计入），合并增量后约 1800+，
+          # 因此阈值定 1500：低于它说明配置基本没生效。
           LINES=$(grep -c '^CONFIG_[A-Za-z0-9_]\+=' .config)
           echo "生效的 CONFIG_ 条目数: $LINES"
-          if [ "$LINES" -lt 5000 ]; then
-            echo "::error::.config 条目数异常（应 > 5000，实际 $LINES），配置可能没有生效" >&2
+          if [ "$LINES" -lt 1500 ]; then
+            echo "::error::.config 条目数异常（应 > 1500，实际 $LINES），配置可能没有生效" >&2
             exit 1
           fi
 
