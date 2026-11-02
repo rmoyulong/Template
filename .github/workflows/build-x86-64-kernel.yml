@@ -13,9 +13,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config_type:
-          - 普通内核
-          - RT实时内核
+        include:
+          - config_type: 普通内核
+            tag: normal
+            fragment: patch/j1900andj1800
+          - config_type: RT实时内核
+            tag: rt
+            fragment: patch/j1900andj1800-RT
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -46,13 +50,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 选择对应的增量配置片段
-          if [[ "${{ matrix.config_type }}" == "RT实时内核" ]]; then
-            FRAGMENT="${{ github.workspace }}/patch/j1900andj1800-RT"
-          else
-            FRAGMENT="${{ github.workspace }}/patch/j1900andj1800"
-          fi
-
+          FRAGMENT="${{ github.workspace }}/${{ matrix.fragment }}"
           test -f "$FRAGMENT" || { echo "::error::缺少配置片段 $FRAGMENT"; exit 1; }
 
           # ============================================================
@@ -94,11 +92,20 @@ jobs:
             exit 1
           fi
 
+          # 模块数量统计：全内建方案下 =m 为 0 属正常，仅提示不报错
+          MODCOUNT=$(grep -c '=m$' .config || true)
+          BUILTIN=$(grep -c '=y$' .config || true)
+          echo "编成模块(=m)的条目数: $MODCOUNT"
+          echo "内建(=y)的条目数: $BUILTIN"
+          if [ "$MODCOUNT" -lt 1 ]; then
+            echo "提示：本配置为全内建（无 =m 模块），modules.tar.gz 将只含元数据，属正常现象"
+          fi
+
           echo "==================== 关键配置自检 ===================="
           for k in CONFIG_LOCALVERSION CONFIG_PREEMPT CONFIG_PREEMPT_RT \
-                   CONFIG_PREEMPT_DYNAMIC CONFIG_HZ \
+                   CONFIG_PREEMPT_DYNAMIC CONFIG_HZ CONFIG_MODULES \
                    CONFIG_SOUND CONFIG_SND CONFIG_SND_PCI CONFIG_SND_HDA_INTEL \
-                   CONFIG_SND_SST_ATOM_HIFI2_PLATFORM_ACPI CONFIG_HDMI_LPE_AUDIO \
+                   CONFIG_SND_HDA_CODEC_REALTEK CONFIG_HDMI_LPE_AUDIO \
                    CONFIG_NET CONFIG_INET CONFIG_EXT4_FS CONFIG_VFAT_FS \
                    CONFIG_EFI CONFIG_USB_HID CONFIG_USB_STORAGE \
                    CONFIG_R8169 CONFIG_IWLWIFI CONFIG_TCP_CONG_BBR CONFIG_DEFAULT_TCP_CONG; do
@@ -111,17 +118,28 @@ jobs:
           echo "====================================================="
 
           # 导出最终生效的配置供排查/发布
-          cp -v .config "${{ github.workspace }}/config-${{ matrix.config_type }}.txt"
+          # 注意：文件名必须用 ASCII（matrix.tag），中文会被 GitHub 发布时剔除，
+          # 导致出现 config-.txt 这种残缺名
+          cp -v .config "${{ github.workspace }}/config-${{ matrix.tag }}.txt"
 
       - name: 构建内核与模块
         working-directory: linux-${{ env.KERNEL_VERSION }}
-        run: make -j$(nproc)
+        run: make -j$(nproc) bzImage modules
 
       - name: 将模块安装至暂存目录
         working-directory: linux-${{ env.KERNEL_VERSION }}
         run: |
+          set -euo pipefail
           mkdir -p ${{ github.workspace }}/modules-staging
           make INSTALL_MOD_PATH=${{ github.workspace }}/modules-staging modules_install
+
+          # 诊断：统计 .ko 数量。全内建方案下为 0 属正常，仅提示不报错
+          KO=$(find ${{ github.workspace }}/modules-staging -name '*.ko' | wc -l)
+          echo ".ko 模块文件数: $KO"
+          du -sh ${{ github.workspace }}/modules-staging
+          if [ "$KO" -eq 0 ]; then
+            echo "提示：未生成 .ko（本内核为全内建，驱动已编入 bzImage），modules.tar.gz 只含元数据"
+          fi
 
       - name: 打包内核模块
         run: |
@@ -138,6 +156,7 @@ jobs:
           sudo find . -name "*.ko" -exec objcopy --remove-section .BTF {} \;
           sudo tar zcf ../modules.tar.gz .
           ls -lh ../modules.tar.gz
+          echo "包内 .ko 数量: $(tar tzf ../modules.tar.gz | grep -c '\.ko$')"
 
       - name: 上传内核镜像
         uses: ncipollo/release-action@v1
@@ -150,10 +169,11 @@ jobs:
             ➦ 💻 固件平台：x86-64-linux
             ➦ ⚽ 固件源码：https://cdn.kernel.org/
             ➦ 🚀 内核版本：${{ env.KERNEL_VERSION }}
-            ➦ 📄 本包内含 bzImage 与最终生效的 .config（config-${{ matrix.config_type }}.txt）
+            ➦ 📄 本包内含 bzImage 与最终生效的 .config（config-${{ matrix.tag }}.txt）
+            ➦ 📦 说明：本内核为"全内建"，所有驱动已编入 bzImage，部署只需此 bzImage 一个文件
           artifacts: |
             linux-${{ env.KERNEL_VERSION }}/arch/x86/boot/bzImage
-            ${{ github.workspace }}/config-${{ matrix.config_type }}.txt
+            ${{ github.workspace }}/config-${{ matrix.tag }}.txt
 
       - name: 上传内核模块
         uses: ncipollo/release-action@v1
@@ -166,4 +186,6 @@ jobs:
             ➦ 💻 固件平台：x86-64-linux
             ➦ ⚽ 固件源码：https://cdn.kernel.org/
             ➦ 🚀 内核版本：${{ env.KERNEL_VERSION }}
+            ➦ 📦 说明：本内核为"全内建"，驱动已在 bzImage 内，本包仅含 modules.builtin 等元数据（约 90KB），属正常现象
+            ➦ 🛠 如需驱动走模块（bzImage 更小），把 patch 片段里的 =y 改回 =m 后重编
           artifacts: ${{ github.workspace }}/modules-staging/lib/modules.tar.gz
