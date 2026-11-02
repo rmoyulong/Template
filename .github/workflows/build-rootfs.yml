@@ -1,5 +1,4 @@
 name: 编译RootFS(Debian+Netplan+SSH/FTP/Nginx/PHP8)
-
 on:
   workflow_dispatch:
     inputs:
@@ -57,7 +56,8 @@ jobs:
           sudo debootstrap \
             --arch=amd64 \
             --variant=minbase \
-            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools \
+            --components="main non-free-firmware" \
+            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-iwlwifi,firmware-linux-free,firmware-intel-sound firmware-linux-nonfree firmware-misc-nonfree \
             "$DEBIAN_SUITE" "$ROOTFS_DIR" \
             http://mirrors.tuna.tsinghua.edu.cn/debian/
 
@@ -66,14 +66,15 @@ jobs:
           sudo tee "$ROOTFS_DIR/etc/apt/sources.list" > /dev/null <<EOF
           deb http://mirrors.tuna.tsinghua.edu.cn/debian/ ${DEBIAN_SUITE} main non-free-firmware
           deb-src http://mirrors.tuna.tsinghua.edu.cn/debian/ ${DEBIAN_SUITE} main non-free-firmware
-          
+
           deb http://security.debian.org/debian-security ${DEBIAN_SUITE}-security main non-free-firmware
           deb-src http://security.debian.org/debian-security ${DEBIAN_SUITE}-security main non-free-firmware
-          
+
           # ${DEBIAN_SUITE}-updates, to get updates before a point release is made;
           # see https://www.debian.org/doc/manuals/debian-reference/ch02.en.html#_updates_and_backports
           deb http://mirrors.tuna.tsinghua.edu.cn/debian/ ${DEBIAN_SUITE}-updates main non-free-firmware
-          deb-src http://mirrors.tuna.tsinghua.edu.cn/debian/ ${DEBIAN_SUITE}-updates main non-free-firmware          
+          deb-src http://mirrors.tuna.tsinghua.edu.cn/debian/ ${DEBIAN_SUITE}-updates main non-free-firmware
+
           EOF
 
       - name: Configure netplan (DHCP dynamic IP)
@@ -85,15 +86,15 @@ jobs:
           # netplan 配置：DHCP 动态获取 IPv4
           sudo mkdir -p "$ROOTFS_DIR/etc/netplan"
           sudo tee "$ROOTFS_DIR/etc/netplan/01-netcfg.yaml" > /dev/null <<'EOF'
-            network:
-              version: 2
-              renderer: networkd
-              ethernets:
-                all-eth:
-                  match:
-                    name: "*"
-                  dhcp4: true
-                  dhcp6: true
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              all-eth:
+                match:
+                  name: "*"
+                dhcp4: true
+                dhcp6: true
           EOF
 
           # netplan 要求配置文件权限为 600
@@ -102,9 +103,9 @@ jobs:
       - name: Configure rootfs (chroot)
         run: |
           # 准备 chroot 所需挂载
-          sudo mount --bind /dev  "$ROOTFS_DIR/dev"
+          sudo mount --bind /dev "$ROOTFS_DIR/dev"
           sudo mount --bind /proc "$ROOTFS_DIR/proc"
-          sudo mount --bind /sys  "$ROOTFS_DIR/sys"
+          sudo mount --bind /sys "$ROOTFS_DIR/sys"
 
           # 让 resolv.conf 由 systemd-resolved 接管（DHCP 下发的 DNS 才会生效）
           sudo ln -sf /run/systemd/resolve/stub-resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
@@ -119,21 +120,20 @@ jobs:
 
           # vsftpd：允许本地用户登录并上传
           # 注意：密码过期期间 FTP 会拒绝登录，需先通过 SSH 改密
-          echo "local_enable=YES"  | sudo tee -a "$ROOTFS_DIR/etc/vsftpd.conf"
-          echo "write_enable=YES"  | sudo tee -a "$ROOTFS_DIR/etc/vsftpd.conf"
+          echo "local_enable=YES" | sudo tee -a "$ROOTFS_DIR/etc/vsftpd.conf"
+          echo "write_enable=YES" | sudo tee -a "$ROOTFS_DIR/etc/vsftpd.conf"
 
           # PHP CGI 路径修复
           sudo sed -i 's/^;*cgi.fix_pathinfo.*/cgi.fix_pathinfo=1/' \
             "$ROOTFS_DIR/etc/php/8.2/cgi/php.ini" || true
 
           # 启用服务开机自启
-          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-networkd            || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-networkd || true
           sudo chroot "$ROOTFS_DIR" systemctl enable systemd-networkd-wait-online || true
-          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-resolved            || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-resolved || true
           sudo chroot "$ROOTFS_DIR" systemctl enable nginx php8.2-fpm ssh vsftpd || true
           sudo chroot "$ROOTFS_DIR" systemctl enable systemd-timesyncd || true
-          sudo chroot "$ROOTFS_DIR" systemctl enable fake-hwclock    || true
-
+          sudo chroot "$ROOTFS_DIR" systemctl enable fake-hwclock || true
 
           # 首次开机生成 netplan 后端配置（可选，保险起见）
           sudo chroot "$ROOTFS_DIR" netplan generate || true
@@ -141,14 +141,18 @@ jobs:
           # 验证 apt 可用（模拟安装，不实际改动）
           sudo chroot "$ROOTFS_DIR" bash -c "apt-get update && apt-get -s install -y curl >/dev/null" || true
 
+          # 确认网卡固件已随 rootfs 打包（rtl_nic=Realtek 有线，iwlwifi=Intel 无线）
+          ls -1 "$ROOTFS_DIR/lib/firmware/rtl_nic" 2>/dev/null | head -5 || true
+          ls -1 "$ROOTFS_DIR/lib/firmware" 2>/dev/null | grep -i iwlwifi || true
+
           # 清理 apt 缓存
           sudo chroot "$ROOTFS_DIR" apt-get clean
           sudo rm -rf "$ROOTFS_DIR/var/lib/apt/lists/"*
 
           # 卸载挂载点
-          sudo umount "$ROOTFS_DIR/dev"  || true
+          sudo umount "$ROOTFS_DIR/dev" || true
           sudo umount "$ROOTFS_DIR/proc" || true
-          sudo umount "$ROOTFS_DIR/sys"  || true
+          sudo umount "$ROOTFS_DIR/sys" || true
 
       - name: Package rootfs
         run: |
@@ -185,7 +189,8 @@ jobs:
           body: |
             Debian ${{ env.DEBIAN_SUITE }} rootfs (x86_64)
             包含：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm
-            
+            网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
+
             **初始 root 密码：`1234`**
             首次通过 SSH 登录会强制要求修改密码；FTP 需在改密后才能登录。
             若下载到的是 rootfs.tar.gz，直接解压：
