@@ -221,7 +221,6 @@ jobs:
           artifacts: ${{ env.OUT_DIR }}/*
           body: |
             Debian ${{ env.DEBIAN_SUITE }} rootfs (x86_64)
-
             ====================🧊 固件信息 🧊=======================
             ➦ 💻 固件平台：x86-64-linux
             ➦ 🚀 内核版本：6.12.115（配合 kernel-image 发布使用）
