@@ -111,11 +111,19 @@ jobs:
           rm -rf /tmp/modules-extract
           mkdir -p /tmp/modules-extract
           sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /tmp/modules-extract
-          VERSION_DIR=$(sudo find /tmp/modules-extract -maxdepth 4 -type d -name "${KERNEL_VERSION}" -print -quit)
-          if [ -z "$VERSION_DIR" ]; then
-            echo "ERROR: 在 modules.tar.gz 中找不到 ${KERNEL_VERSION} 目录"
-            exit 1
-          fi
+            # 从 modules.tar.gz 里提取真实的版本目录名（兼容 6.12.115 和 6.12.115-rt）
+            KVER="$(tar -tzf modules.tar.gz | awk -F/ '$2 != "" {print $2; exit}')"
+
+            if [ -z "$KVER" ]; then
+              echo "ERROR: modules.tar.gz 结构异常，提取不到版本目录"
+              tar -tzf modules.tar.gz | head -5
+              exit 1
+            fi
+            echo "检测到模块目录: $KVER"
+
+            # 之后的校验也用它，别再写 6.12.115
+            test -d "$ROOTFS_DIR/lib/modules/$KVER" || { echo "ERROR: 解压后仍无 $KVER"; exit 1; }
+
           echo "找到模块目录: $VERSION_DIR"
           sudo mkdir -p /mnt/rootfs/lib/modules
           sudo rm -rf "/mnt/rootfs/lib/modules/${KERNEL_VERSION}"

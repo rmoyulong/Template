@@ -83,57 +83,76 @@ jobs:
 
       - name: Populate rootfs
         run: |
-          LOOP="${{ env.LOOP }}"
-          sudo mkdir -p /mnt/rootfs /mnt/efi
-          sudo mount "${LOOP}p3" /mnt/rootfs
-          sudo mount "${LOOP}p2" /mnt/efi
+            set -euo pipefail
 
-          # 解压 rootfs，保留完整权限和符号链接
-          sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner
+            LOOP="${{ env.LOOP }}"
 
-          # 清掉 rootfs 中可能残留的损坏 apt 缓存（避免烧录后 apt 解析报错）
-          sudo rm -rf /mnt/rootfs/var/lib/apt/lists/* || true
+            # ---------- 挂载分区（GPT：p3=rootfs，p2=ESP）----------
+            sudo mkdir -p /mnt/rootfs /mnt/efi
+            sudo mount "${LOOP}p3" /mnt/rootfs
+            sudo mount "${LOOP}p2" /mnt/efi
 
-          # 放入安装脚本（GPT 版，两份）
-          #   /root/install.sh      ← patch/install-gpt.sh       （rsync 当前系统整机到目标盘）
-          #   /root/install-plus.sh ← patch/install-gpt-plus.sh  （解压 /root/rootfs.tar.gz）
-          sudo mkdir -p /mnt/rootfs/root
-          sudo chmod 700 /mnt/rootfs/root
-          for pair in \
-            "${{ github.workspace }}/patch/install-gpt.sh:/mnt/rootfs/root/install.sh" \
-            "${{ github.workspace }}/patch/install-gpt-plus.sh:/mnt/rootfs/root/install-plus.sh"; do
-            src="${pair%%:*}"; dst="${pair##*:}"
-            if [ -f "$src" ]; then
-              sudo cp "$src" "$dst"
-              sudo chmod 755 "$dst"
-              sudo sed -i 's/\r$//' "$dst"
-              echo "=== 已放入 $dst（来源：$src） ==="
-            else
-              echo "WARN: $src 不存在，跳过"
+            # ---------- 解压 rootfs ----------
+            sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner
+            sudo rm -rf /mnt/rootfs/var/lib/apt/lists/* || true
+
+            # ---------- 放入安装脚本（GPT 版，两份）----------
+            # /root/install.sh      ← patch/install-gpt.sh      （rsync 当前系统整机到目标盘）
+            # /root/install-plus.sh ← patch/install-gpt-plus.sh （解压 /root/rootfs.tar.gz）
+            sudo mkdir -p /mnt/rootfs/root
+            sudo chmod 700 /mnt/rootfs/root
+            for pair in \
+              "${{ github.workspace }}/patch/install-gpt.sh:/mnt/rootfs/root/install.sh" \
+              "${{ github.workspace }}/patch/install-gpt-plus.sh:/mnt/rootfs/root/install-plus.sh"; do
+              src="${pair%%:*}"; dst="${pair##*:}"
+              if [ -f "$src" ]; then
+                sudo cp "$src" "$dst"
+                sudo chmod 755 "$dst"
+                sudo sed -i 's/\r$//' "$dst"
+                echo "=== 已放入 $dst（来源：$src） ==="
+              else
+                echo "WARN: $src 不存在，跳过"
+              fi
+            done
+            sudo ls -l /mnt/rootfs/root/ || true
+
+            # ---------- 解压 modules，读出真实版本目录名 ----------
+            rm -rf /tmp/modules-extract
+            mkdir -p /tmp/modules-extract
+            sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /tmp/modules-extract
+
+            # 版本目录名 = 解压后顶层唯一目录（6.12.115 / 6.12.115-rt 都能识别）
+            KVER=""
+            for d in /tmp/modules-extract/*/; do
+              [ -d "$d" ] || continue
+              KVER="$(basename "$d")"
+              break
+            done
+
+            if [ -z "$KVER" ]; then
+              echo "ERROR: modules.tar.gz 结构异常，提取不到版本目录"
+              ls -la /tmp/modules-extract
+              exit 1
             fi
-          done
-          sudo ls -l /mnt/rootfs/root/ || true
+            echo "检测到模块目录: $KVER"
 
-          # 解压 modules 到临时目录
-          rm -rf /tmp/modules-extract
-          mkdir -p /tmp/modules-extract
-          sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /tmp/modules-extract
+            # 校验：确认顶层目录里确实有这个版本目录
+            test -d "/tmp/modules-extract/$KVER" || { echo "ERROR: 缺少 /tmp/modules-extract/$KVER"; exit 1; }
 
-          VERSION_DIR=$(sudo find /tmp/modules-extract -maxdepth 4 -type d -name "${KERNEL_VERSION}" -print -quit)
-          if [ -z "$VERSION_DIR" ]; then
-            echo "ERROR: 在 modules.tar.gz 中找不到 ${KERNEL_VERSION} 目录"
-            exit 1
-          fi
-          echo "找到模块目录: $VERSION_DIR"
+            # ---------- 安装模块（目标目录名必须等于 uname -r，即 $KVER）----------
+            sudo mkdir -p /mnt/rootfs/lib/modules
+            sudo rm -rf "/mnt/rootfs/lib/modules/$KVER"
+            sudo mv "/tmp/modules-extract/$KVER" "/mnt/rootfs/lib/modules/$KVER"
 
-          sudo mkdir -p /mnt/rootfs/lib/modules
-          sudo rm -rf "/mnt/rootfs/lib/modules/${KERNEL_VERSION}"
-          sudo mv "$VERSION_DIR" "/mnt/rootfs/lib/modules/${KERNEL_VERSION}"
+            # ---------- 放置内核镜像 ----------
+            sudo mkdir -p /mnt/rootfs/boot
+            sudo cp "$WORK_DIR/bzImage" "/mnt/rootfs/boot/vmlinuz-$KVER"
 
-          # 放置内核
-          sudo mkdir -p /mnt/rootfs/boot
-          sudo cp "$WORK_DIR/bzImage" "/mnt/rootfs/boot/vmlinuz-${KERNEL_VERSION}"
-          ls -lh "/mnt/rootfs/boot/vmlinuz-${KERNEL_VERSION}"
+            echo "===== 内核与模块就位 ====="
+            ls -lh "/mnt/rootfs/boot/vmlinuz-$KVER"
+            ls -l  "/mnt/rootfs/lib/modules/"
+            echo "KVER=$KVER"
+
 
       - name: Generate initramfs and install GRUB (chroot)
         run: |
