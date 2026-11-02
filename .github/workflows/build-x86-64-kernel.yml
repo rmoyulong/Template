@@ -46,47 +46,69 @@ jobs:
         run: |
           set -euo pipefail
 
-          # 选择对应的基础配置
+          # 选择对应的增量配置片段
           if [[ "${{ matrix.config_type }}" == "RT实时内核" ]]; then
-            SRC="${{ github.workspace }}/patch/j1900andj1800-RT"
+            FRAGMENT="${{ github.workspace }}/patch/j1900andj1800-RT"
           else
-            SRC="${{ github.workspace }}/patch/j1900andj1800"
+            FRAGMENT="${{ github.workspace }}/patch/j1900andj1800"
           fi
 
-          # 关键：.config 必须放在源码根目录，不能写成 kernel/.config。
-          # 若根目录没有 .config，make 会静默改用 x86_64_defconfig，配置形同作废。
-          test -f "$SRC" || { echo "::error::缺少配置文件 $SRC"; exit 1; }
-          cp -v "$SRC" ./.config
+          test -f "$FRAGMENT" || { echo "::error::缺少配置片段 $FRAGMENT"; exit 1; }
 
-          # 自动补齐依赖，并把写错的符号名打印出来（KCONFIG_WARN_UNKNOWN_SYMBOLS）
-          KCONFIG_WARN_UNKNOWN_SYMBOLS=1 make olddefconfig
+          # ============================================================
+          # 正确的配置流程：
+          #   1) 先用 x86_64_defconfig 生成一份可启动、完整的基础配置
+          #      （官方维护的 x86_64 默认配置，约 8000+ 条目）
+          #   2) 再用 merge_config.sh 在其基础上叠加我们的定制片段
+          #      （自动处理依赖冲突）
+          #   3) 关证书项，最后 olddefconfig 做一次依赖补齐
+          # 绝不能只 cp 一份残缺配置就 olddefconfig，否则父选项没触发、
+          # 子系统整块没进来，条目数只有 1200+。
+          # ============================================================
 
-          # 禁用证书相关选项，避免构建时报签名错误
+          # 1) 从官方 x86_64 默认配置起步（~9000 条目，完整可启动）
+          make x86_64_defconfig
+          COUNT0=$(grep -c '^CONFIG_[A-Za-z0-9_]\+=' .config)
+          echo "defconfig 条目数: $COUNT0"
+
+          # 2) 合并我们的增量配置片段（只写需要修改/额外开启的选项）
+          ./scripts/kconfig/merge_config.sh -m -O . .config "$FRAGMENT"
+
+          # 3) 禁用证书相关选项，避免构建时报签名错误
           scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
           scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
           scripts/config --disable MODULE_SIG_ALL
           scripts/config --disable MODULE_SIG_FORCE
 
-          make olddefconfig
+          # 4) 最后一次依赖补齐，并让 kconfig 报告写错的符号名
+          KCONFIG_WARN_UNKNOWN_SYMBOLS=1 make olddefconfig
 
-          # ---- 配置自检（放在 olddefconfig 之后，精简配置也能通过）----
-          LINES=$(grep -c '^CONFIG_' .config || true)
+          # ---- 配置自检 ----
+          LINES=$(grep -c '^CONFIG_[A-Za-z0-9_]\+=' .config)
           echo "生效的 CONFIG_ 条目数: $LINES"
-          if [ "$LINES" -lt 2000 ]; then
-            echo "::error::.config 条目数异常，配置可能没有生效"
+          if [ "$LINES" -lt 5000 ]; then
+            echo "::error::.config 条目数异常（应 > 5000，实际 $LINES），配置可能没有生效" >&2
             exit 1
           fi
 
           echo "==================== 关键配置自检 ===================="
-          for k in CONFIG_LOCALVERSION CONFIG_PREEMPT CONFIG_PREEMPT_RT CONFIG_HZ \
+          for k in CONFIG_LOCALVERSION CONFIG_PREEMPT CONFIG_PREEMPT_RT \
+                   CONFIG_PREEMPT_DYNAMIC CONFIG_HZ \
                    CONFIG_SOUND CONFIG_SND CONFIG_SND_PCI CONFIG_SND_HDA_INTEL \
                    CONFIG_SND_SST_ATOM_HIFI2_PLATFORM_ACPI CONFIG_HDMI_LPE_AUDIO \
                    CONFIG_NET CONFIG_INET CONFIG_EXT4_FS CONFIG_VFAT_FS \
                    CONFIG_EFI CONFIG_USB_HID CONFIG_USB_STORAGE \
                    CONFIG_R8169 CONFIG_IWLWIFI CONFIG_TCP_CONG_BBR CONFIG_DEFAULT_TCP_CONG; do
-            grep -E "^${k}=" .config || echo "  # ${k} is not set"
+            if grep -qE "^${k}=" .config; then
+              grep -E "^${k}=" .config
+            else
+              echo "  # ${k} is not set"
+            fi
           done
           echo "====================================================="
+
+          # 导出最终生效的配置供排查/发布
+          cp -v .config "${{ github.workspace }}/config-${{ matrix.config_type }}.txt"
 
       - name: 构建内核与模块
         working-directory: linux-${{ env.KERNEL_VERSION }}
@@ -95,7 +117,6 @@ jobs:
       - name: 将模块安装至暂存目录
         working-directory: linux-${{ env.KERNEL_VERSION }}
         run: |
-          # 装到工作区内的临时目录，而不是 /usr/lib/modules/
           mkdir -p ${{ github.workspace }}/modules-staging
           make INSTALL_MOD_PATH=${{ github.workspace }}/modules-staging modules_install
 
@@ -103,10 +124,10 @@ jobs:
         run: |
           set -euo pipefail
           cd ${{ github.workspace }}/modules-staging/lib/modules
-          # build / source 是符号链接，位于版本子目录内部，不是 lib/modules 根
           KVER_DIR=$(ls -d */ | head -1)
           KVER_DIR=${KVER_DIR%/}
           echo "模块目录: $KVER_DIR"
+          # build / source / vmlinux 等位于版本子目录内部
           sudo rm -f "$KVER_DIR/build" "$KVER_DIR/source" \
                        "$KVER_DIR/vmlinux" "$KVER_DIR/System.map"
           sudo find . \( -name "*.o" -o -name "*.cmd" -o -name ".tmp_*" \) -delete
@@ -114,10 +135,6 @@ jobs:
           sudo find . -name "*.ko" -exec objcopy --remove-section .BTF {} \;
           sudo tar zcf ../modules.tar.gz .
           ls -lh ../modules.tar.gz
-
-      - name: 导出最终生效的 .config
-        working-directory: linux-${{ env.KERNEL_VERSION }}
-        run: cp -v .config "${{ github.workspace }}/config-${{ matrix.config_type }}.txt"
 
       - name: 上传内核镜像
         uses: ncipollo/release-action@v1
