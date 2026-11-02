@@ -18,7 +18,7 @@ env:
   # 仅作兜底展示；真实版本号由 modules.tar.gz 内的目录名自动识别（如 6.12.115-rt）
   KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '6.12.115' }}
   # 从 4096 提升到 6144，给 rootfs + 运行期 apt 留足空间，避免写满产生半截缓存
-  IMG_SIZE_MB: 2248
+  IMG_SIZE_MB: 2500
   WORK_DIR: ${{ github.workspace }}/work
   IMG_FILE: ${{ github.workspace }}/work/debian-rootfs.img
   ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-bookworm-latest/rootfs.tar.gz
