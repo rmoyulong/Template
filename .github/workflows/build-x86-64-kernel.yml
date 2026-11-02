@@ -162,6 +162,8 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
+          # 资源上传失败时让构建直接报错，避免"没传上去却显示成功"
+          artifactErrorsFailBuild: true
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: kernel-image-${{ matrix.config_type }}
           body: |
@@ -179,6 +181,8 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
+          # 资源上传失败时让构建直接报错，避免"没传上去却显示成功"
+          artifactErrorsFailBuild: true
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: kernel-modules-${{ matrix.config_type }}
           body: |
