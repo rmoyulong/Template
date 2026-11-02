@@ -3,8 +3,8 @@
 # 目标平台：Intel Bay Trail（J1800 / J1900 / N3540），x86_64
 #
 # 用法：先 make x86_64_defconfig，再用 merge_config.sh 叠加本文件。
-#       仅写"需要在 defconfig 基础上额外开启或修改"的选项；
-#       NET/INET/PCI/USB/EXT4/EFI/DEVTMPFS/CGROUPS 等基础项由 defconfig 提供。
+#       只写"需要在 defconfig 基础上额外开启或修改"的选项；
+#       NET/INET/PCI/EXT4/DEVTMPFS/CGROUPS 等基础项由 defconfig 提供。
 #       6.12 起 PREEMPT_RT 已并入主线，无需打补丁。
 #
 # 模块策略（本文件 = 全内建 / monolithic）：
@@ -12,9 +12,15 @@
 #   不依赖 /lib/modules 下任何 .ko；modules.tar.gz 里只剩元数据（约 90KB），
 #   这是"全内建"的正常现象，不是错误、不是坏包。
 #   代价：bzImage 较大（约 17~18MB）、编译略慢、换硬件需重编内核。
+#
+#   ⚠️ 关键：defconfig 里 USB 控制器 / HID / PS2 键盘等基础驱动默认是 =m，
+#      全内建模式下必须显式写成 =y，否则会出现"能启动、但键盘打字无反应"
+#      的现象（模块包是空的，驱动等于完全没开）。见下方第 11~13 节。
+#
 #   注意：固件（firmware）不会编进内核，仍要靠 rootfs 里的 /lib/firmware
 #         （firmware-realtek / firmware-iwlwifi / firmware-linux 等）。
-#   需要"bzImage 小、驱动走模块"时：把下面驱动行的 =y 改回 =m 即可。
+#
+#   需要"bzImage 更小、驱动走模块"时：见 patch/j1900andj1800-RT-modular
 #
 
 # ---- 0. 模块支持（全内建也建议保留，便于日后切换/生成 modules.builtin）----
@@ -137,7 +143,8 @@ CONFIG_BT_MRVL=y
 CONFIG_BT_MTKSDIO=y
 CONFIG_CRYPTO_CMAC=y
 
-# ---- 8. 文件系统（EXT4 由 defconfig 内建；FAT 内建以便读写 EFI 分区）----
+# ---- 8. 文件系统（根文件系统 EXT4 必须内建；FAT 内建以便读写 EFI 分区）----
+CONFIG_EXT4_FS=y
 CONFIG_XFS_FS=y
 CONFIG_BTRFS_FS=y
 CONFIG_VFAT_FS=y
@@ -175,11 +182,61 @@ CONFIG_NFT_COMPAT=y
 CONFIG_NFT_XFRM=y
 CONFIG_NETFILTER_XTABLES=y
 
-# ---- 11. 其他工控机常用 ----
+# ============================================================
+# ==========  11. USB 主机控制器（键鼠/U盘必需，内建）  ========
+# ============================================================
+# ⚠️ defconfig 里这些默认是 =m。全内建模式下若不改成 =y，
+#    bzImage 里没有 USB 控制器驱动，而模块包又是空的（全内建不产 .ko）
+#    → 插上的 USB 键盘/鼠标完全不工作。这就是"能启动但不能打字"的根因。
+CONFIG_USB=y
+CONFIG_USB_COMMON=y
+CONFIG_USB_PCI=y
+CONFIG_USB_XHCI_HCD=y          # USB 3.0（Bay Trail 主要 USB 口）
+CONFIG_USB_XHCI_PCI=y
+CONFIG_USB_EHCI_HCD=y          # USB 2.0
+CONFIG_USB_EHCI_PCI=y
+CONFIG_USB_OHCI_HCD=y          # USB 1.1
+CONFIG_USB_OHCI_HCD_PCI=y
+CONFIG_USB_UHCI_HCD=y          # 老式 UHCI 控制器
+
+# ============================================================
+# ==========  12. 输入设备核心 + HID（键盘鼠标必需）  ==========
+# ============================================================
+CONFIG_INPUT=y
+CONFIG_INPUT_KEYBOARD=y
+CONFIG_KEYBOARD_ATKBD=y        # AT/PS2 键盘（所有键盘的基础驱动）
+CONFIG_INPUT_MOUSE=y
+CONFIG_MOUSE_PS2=y             # PS/2 鼠标
+CONFIG_MOUSE_PS2_ALPS=y
+CONFIG_MOUSE_PS2_LOGIPS2PP=y
+CONFIG_MOUSE_PS2_SYNAPTICS=y
+CONFIG_MOUSE_PS2_CYPRESS=y
+CONFIG_MOUSE_PS2_TRACKPOINT=y
+CONFIG_MOUSE_PS2_ELANTECH=y
+CONFIG_MOUSE_PS2_SENTELIC=y
+CONFIG_MOUSE_PS2_TOUCHKIT=y
+CONFIG_MOUSE_PS2_FOCALTECH=y
+CONFIG_MOUSE_PS2_VMMOUSE=y
+CONFIG_INPUT_MOUSEDEV=y
+CONFIG_HID=y
+CONFIG_HID_GENERIC=y           # 通用 HID（USB 键盘的核心协议驱动）
+CONFIG_USB_HID=y               # USB HID 传输层（没有它 USB 键盘完全不工作）
+CONFIG_HIDRAW=y
+CONFIG_UHID=y
+CONFIG_INPUT_EVDEV=y
+
+# ============================================================
+# ==========  13. 控制台 / TTY（保证 tty 可输入）  ============
+# ============================================================
+CONFIG_TTY=y
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y            # VT 控制台（必须，否则 tty 打字无反应）
+CONFIG_HW_CONSOLE=y
+CONFIG_SERIAL_8250=y
 CONFIG_SERIAL_8250_CONSOLE=y
+
+# ---- 14. 其他工控机常用 ----
 CONFIG_HPET_TIMER=y
 CONFIG_IKCONFIG=y
 CONFIG_IKCONFIG_PROC=y
-CONFIG_INPUT_EVDEV=y
 CONFIG_USB_STORAGE=y
-CONFIG_USB_OHCI_HCD=y

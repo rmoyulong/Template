@@ -14,12 +14,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - config_type: 普通内核
-            tag: normal
-            fragment: patch/j1900andj1800
+          # ---- RT 全内建：所有驱动编进 bzImage，部署只需一个文件 ----
           - config_type: RT实时内核
             tag: rt
             fragment: patch/j1900andj1800-RT
+            mode: 全内建（所有驱动编入 bzImage，modules 包只含元数据）
+          # ---- RT 模块化：关键驱动内建，其余走模块 ----
+          - config_type: RT实时内核-模块化
+            tag: rt-mod
+            fragment: patch/j1900andj1800-RT-modular
+            mode: 关键驱动内建 + 其余模块化（需同时安装 modules.tar.gz）
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -92,30 +96,62 @@ jobs:
             exit 1
           fi
 
-          # 模块数量统计：全内建方案下 =m 为 0 属正常，仅提示不报错
+          # 模块数量统计
           MODCOUNT=$(grep -c '=m$' .config || true)
           BUILTIN=$(grep -c '=y$' .config || true)
           echo "编成模块(=m)的条目数: $MODCOUNT"
           echo "内建(=y)的条目数: $BUILTIN"
-          if [ "$MODCOUNT" -lt 1 ]; then
-            echo "提示：本配置为全内建（无 =m 模块），modules.tar.gz 将只含元数据，属正常现象"
+
+          if [ "${{ matrix.tag }}" = "rt-mod" ]; then
+            # 模块化内核：=m 必须达到一定数量，否则说明片段没生效
+            if [ "$MODCOUNT" -lt 50 ]; then
+              echo "::error::本配置应为模块化内核，但 =m 条目数仅 $MODCOUNT（应 > 50），配置可能没生效" >&2
+              exit 1
+            fi
+            echo "本配置为模块化：关键驱动内建，其余走模块（=m）"
+          else
+            # 全内建内核：=m 为 0 属正常，仅提示不报错
+            if [ "$MODCOUNT" -lt 1 ]; then
+              echo "提示：本配置为全内建（无 =m 模块），modules.tar.gz 将只含元数据，属正常现象"
+            fi
           fi
 
-          echo "==================== 关键配置自检 ===================="
-          for k in CONFIG_LOCALVERSION CONFIG_PREEMPT CONFIG_PREEMPT_RT \
-                   CONFIG_PREEMPT_DYNAMIC CONFIG_HZ CONFIG_MODULES \
-                   CONFIG_SOUND CONFIG_SND CONFIG_SND_PCI CONFIG_SND_HDA_INTEL \
-                   CONFIG_SND_HDA_CODEC_REALTEK CONFIG_HDMI_LPE_AUDIO \
-                   CONFIG_NET CONFIG_INET CONFIG_EXT4_FS CONFIG_VFAT_FS \
-                   CONFIG_EFI CONFIG_USB_HID CONFIG_USB_STORAGE \
-                   CONFIG_R8169 CONFIG_IWLWIFI CONFIG_TCP_CONG_BBR CONFIG_DEFAULT_TCP_CONG; do
+          echo "==================== 关键配置自检（仅打印） ===================="
+          for k in CONFIG_LOCALVERSION CONFIG_PREEMPT_RT CONFIG_HZ CONFIG_MODULES \
+                   CONFIG_SND CONFIG_SND_HDA_INTEL CONFIG_SND_HDA_CODEC_REALTEK \
+                   CONFIG_NET CONFIG_INET CONFIG_VFAT_FS CONFIG_EFI \
+                   CONFIG_IWLWIFI CONFIG_TCP_CONG_BBR CONFIG_DEFAULT_TCP_CONG; do
             if grep -qE "^${k}=" .config; then
               grep -E "^${k}=" .config
             else
               echo "  # ${k} is not set"
             fi
           done
-          echo "====================================================="
+          echo "============================================================="
+
+          # ---- 关键驱动强制校验：必须内建（=y）----
+          # 这些是保证"能启动 + 能打字 + 有网 + 有显示"的最小集合。
+          # 若符号名写错、或依赖没满足，olddefconfig 会将其变成 not set，
+          # 这里会直接报错拦下 —— 避免装到机器上才发现键盘不可用。
+          echo "==================== 关键驱动强制校验 ===================="
+          CRITICAL="CONFIG_USB CONFIG_USB_XHCI_HCD CONFIG_USB_EHCI_HCD \
+                    CONFIG_USB_HID CONFIG_HID_GENERIC CONFIG_INPUT_EVDEV \
+                    CONFIG_KEYBOARD_ATKBD CONFIG_VT_CONSOLE CONFIG_TTY \
+                    CONFIG_USB_STORAGE CONFIG_R8169 CONFIG_EXT4_FS"
+          MISSING=""
+          for k in $CRITICAL; do
+            if grep -qE "^${k}=y$" .config; then
+              echo "  [OK]   ${k}=y"
+            else
+              echo "  [FAIL] ${k} 不是 =y（当前：$(grep -E "^${k}=" .config || echo '未设置'))"
+              MISSING="$MISSING $k"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::关键驱动未内建（=y），会导致启动/键盘/网络异常：$MISSING" >&2
+            exit 1
+          fi
+          echo "========================================================="
 
           # 导出最终生效的配置供排查/发布
           # 注意：文件名必须用 ASCII（matrix.tag），中文会被 GitHub 发布时剔除，
@@ -133,11 +169,15 @@ jobs:
           mkdir -p ${{ github.workspace }}/modules-staging
           make INSTALL_MOD_PATH=${{ github.workspace }}/modules-staging modules_install
 
-          # 诊断：统计 .ko 数量。全内建方案下为 0 属正常，仅提示不报错
+          # 诊断：统计 .ko 数量
           KO=$(find ${{ github.workspace }}/modules-staging -name '*.ko' | wc -l)
           echo ".ko 模块文件数: $KO"
           du -sh ${{ github.workspace }}/modules-staging
           if [ "$KO" -eq 0 ]; then
+            if [ "${{ matrix.tag }}" = "rt-mod" ]; then
+              echo "::error::本配置应为模块化内核，却未生成任何 .ko，配置可能没生效" >&2
+              exit 1
+            fi
             echo "提示：未生成 .ko（本内核为全内建，驱动已编入 bzImage），modules.tar.gz 只含元数据"
           fi
 
@@ -172,7 +212,7 @@ jobs:
             ➦ ⚽ 固件源码：https://cdn.kernel.org/
             ➦ 🚀 内核版本：${{ env.KERNEL_VERSION }}
             ➦ 📄 本包内含 bzImage 与最终生效的 .config（config-${{ matrix.tag }}.txt）
-            ➦ 📦 说明：本内核为"全内建"，所有驱动已编入 bzImage，部署只需此 bzImage 一个文件
+            ➦ 📦 模块策略：${{ matrix.mode }}
           artifacts: |
             linux-${{ env.KERNEL_VERSION }}/arch/x86/boot/bzImage
             ${{ github.workspace }}/config-${{ matrix.tag }}.txt
@@ -190,6 +230,7 @@ jobs:
             ➦ 💻 固件平台：x86-64-linux
             ➦ ⚽ 固件源码：https://cdn.kernel.org/
             ➦ 🚀 内核版本：${{ env.KERNEL_VERSION }}
-            ➦ 📦 说明：本内核为"全内建"，驱动已在 bzImage 内，本包仅含 modules.builtin 等元数据（约 90KB），属正常现象
-            ➦ 🛠 如需驱动走模块（bzImage 更小），把 patch 片段里的 =y 改回 =m 后重编
+            ➦ 📦 模块策略：${{ matrix.mode }}
+            ➦ 🛠 说明：全内建版本包仅含 modules.builtin 等元数据（约 90KB），属正常现象；
+                       模块化版本包内含真实 .ko（十几~几十 MB），安装时必须解压到目标盘。
           artifacts: ${{ github.workspace }}/modules-staging/lib/modules.tar.gz
