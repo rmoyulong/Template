@@ -1,6 +1,6 @@
 # Template
 
-本仓库是个人的 OPENWRT 编译模板。
+编译 j1900 & j1800 卡刷 debian 固件
 
 [![build](https://img.shields.io/github/actions/workflow/status/rmoyulong/Template/Armbian.yml)](https://github.com/rmoyulong/Template/actions/workflows/Armbian.yml) [![downloads](https://img.shields.io/github/downloads/rmoyulong/Template/total)](https://github.com/rmoyulong/Template/releases) [![downloads@latest](https://img.shields.io/github/downloads/rmoyulong/Template/latest/total)](https://github.com/rmoyulong/Template/releases/latest)<br>
 
