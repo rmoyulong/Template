@@ -56,10 +56,13 @@ jobs:
           sudo debootstrap \
             --arch=amd64 \
             --variant=minbase \
-            --components="main non-free-firmware" \
-            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools \
+            --components=main,non-free-firmware \
+            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools \
             "$DEBIAN_SUITE" "$ROOTFS_DIR" \
-            http://deb.debian.org/debian
+            http://mirrors.tuna.tsinghua.edu.cn/debian/ 
+            
+            #http://deb.debian.org/debian
+            
 
       - name: Configure APT sources
         run: |
