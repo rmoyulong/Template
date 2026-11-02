@@ -1,4 +1,5 @@
 name: 编译RootFS(Debian+Netplan+SSH/FTP/Nginx/PHP8)
+
 on:
   workflow_dispatch:
     inputs:
@@ -15,11 +16,13 @@ permissions:
 
 env:
   DEBIAN_SUITE: ${{ github.event.inputs.debian_suite || 'bookworm' }}
+  MIRROR: http://mirrors.tuna.tsinghua.edu.cn/debian
   ROOTFS_DIR: ${{ github.workspace }}/rootfs
   OUT_DIR: ${{ github.workspace }}/out
 
 jobs:
   build-rootfs:
+    name: 构建 RootFS
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
@@ -28,6 +31,7 @@ jobs:
       # GitHub 免费 runner 磁盘约 14GB，先腾空间
       - name: Free disk space
         run: |
+          set -euo pipefail
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
                       /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
           sudo apt-get clean
@@ -35,12 +39,15 @@ jobs:
 
       - name: Install debootstrap
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y debootstrap debian-archive-keyring gnupg dirmngr
 
       - name: Ensure bookworm archive key present
         run: |
-          if ! gpg --show-keys --with-fingerprint /usr/share/keyrings/debian-archive-keyring.gpg 2>/dev/null | grep -q "F8D2 585B 8783 D481"; then
+          set -euo pipefail
+          if ! gpg --show-keys --with-fingerprint /usr/share/keyrings/debian-archive-keyring.gpg 2>/dev/null \
+               | grep -q "F8D2 585B 8783 D481"; then
             sudo mkdir -p /root/.gnupg
             sudo chmod 700 /root/.gnupg
             sudo gpg --homedir /root/.gnupg \
@@ -52,41 +59,58 @@ jobs:
 
       - name: Debootstrap base system
         run: |
+          set -euo pipefail
           sudo mkdir -p "$ROOTFS_DIR"
+
+          # ★ 关键：--components 必须用「逗号」分隔，不能写空格！
+          #   debootstrap 内部执行 USE_COMPONENTS="$(echo "$USE_COMPONENTS" | tr , "|")"，
+          #   把逗号转成 '|' 后作为 case 模式使用；写成 "main non-free-firmware"
+          #   会导致 eval 语法错误，最终报 "Invalid Release file, no valid components"。
           sudo debootstrap \
             --arch=amd64 \
             --variant=minbase \
             --components=main,non-free-firmware \
-            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-iwlwifi \
+            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-iwlwifi,firmware-linux-free \
             "$DEBIAN_SUITE" "$ROOTFS_DIR" \
-            http://mirrors.tuna.tsinghua.edu.cn/debian/ 
-            
-            #http://deb.debian.org/debian
-            
+            "$MIRROR/"
+
+      # 固件包来自 non-free-firmware 组件，这一步能立刻暴露 --components 写错的问题
+      - name: Verify firmware packages
+        run: |
+          set -euo pipefail
+          echo "===== 校验固件包是否装上（non-free-firmware 生效的标志）====="
+          for pkg in firmware-realtek firmware-iwlwifi firmware-linux-free; do
+            if sudo chroot "$ROOTFS_DIR" dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null \
+                 | grep -q "install ok installed"; then
+              echo "  [OK]   $pkg"
+            else
+              echo "  [FAIL] $pkg 未安装 —— 请检查 --components 是否为逗号分隔"
+              exit 1
+            fi
+          done
+          echo "----- 实际文件抽查 -----"
+          ls -1 "$ROOTFS_DIR/lib/firmware/rtl_nic" 2>/dev/null | head -5 || true
+          ls -1 "$ROOTFS_DIR/lib/firmware" 2>/dev/null | grep -i iwlwifi || true
 
       - name: Configure APT sources
         run: |
+          set -euo pipefail
           sudo tee "$ROOTFS_DIR/etc/apt/sources.list" > /dev/null <<EOF
-          deb http://mirrors.tuna.tsinghua.edu.cn/debian/ ${DEBIAN_SUITE} main non-free-firmware
-          deb-src http://mirrors.tuna.tsinghua.edu.cn/debian/ ${DEBIAN_SUITE} main non-free-firmware
-
+          deb $MIRROR/ ${DEBIAN_SUITE} main non-free-firmware
+          deb $MIRROR/ ${DEBIAN_SUITE}-updates main non-free-firmware
           deb http://security.debian.org/debian-security ${DEBIAN_SUITE}-security main non-free-firmware
-          deb-src http://security.debian.org/debian-security ${DEBIAN_SUITE}-security main non-free-firmware
-
-          # ${DEBIAN_SUITE}-updates, to get updates before a point release is made;
-          # see https://www.debian.org/doc/manuals/debian-reference/ch02.en.html#_updates_and_backports
-          deb http://mirrors.tuna.tsinghua.edu.cn/debian/ ${DEBIAN_SUITE}-updates main non-free-firmware
-          deb-src http://mirrors.tuna.tsinghua.edu.cn/debian/ ${DEBIAN_SUITE}-updates main non-free-firmware
-
           EOF
+          echo "----- sources.list -----"
+          cat "$ROOTFS_DIR/etc/apt/sources.list"
 
       - name: Configure netplan (DHCP dynamic IP)
         run: |
-          # 禁用可预测网卡名，统一使用 eth0，避免 netplan 匹配不上
+          set -euo pipefail
+          # 1) 禁用可预测网卡名，统一使用 eth0，避免 netplan match 不上
           sudo mkdir -p "$ROOTFS_DIR/etc/systemd/network"
           sudo ln -sf /dev/null "$ROOTFS_DIR/etc/systemd/network/99-default.link"
 
-          # netplan 配置：DHCP 动态获取 IPv4
+          # 2) netplan：DHCP 动态获取 IPv4/IPv6（匹配所有以太网卡）
           sudo mkdir -p "$ROOTFS_DIR/etc/netplan"
           sudo tee "$ROOTFS_DIR/etc/netplan/01-netcfg.yaml" > /dev/null <<'EOF'
           network:
@@ -105,10 +129,22 @@ jobs:
 
       - name: Configure rootfs (chroot)
         run: |
-          # 准备 chroot 所需挂载
-          sudo mount --bind /dev "$ROOTFS_DIR/dev"
+          set -euo pipefail
+
+          # 准备 chroot 所需挂载，并保证退出时一定卸载
+          sudo mount --bind /dev  "$ROOTFS_DIR/dev"
           sudo mount --bind /proc "$ROOTFS_DIR/proc"
-          sudo mount --bind /sys "$ROOTFS_DIR/sys"
+          sudo mount --bind /sys  "$ROOTFS_DIR/sys"
+          cleanup() {
+            sudo umount "$ROOTFS_DIR/dev"  || true
+            sudo umount "$ROOTFS_DIR/proc" || true
+            sudo umount "$ROOTFS_DIR/sys"  || true
+          }
+          trap cleanup EXIT
+
+          # 主机名（debootstrap 默认会拷 runner 的 hostname，这里固定掉）
+          printf 'debian\n' | sudo tee "$ROOTFS_DIR/etc/hostname" > /dev/null
+          printf '127.0.0.1\tlocalhost\n127.0.1.1\tdebian\n' | sudo tee "$ROOTFS_DIR/etc/hosts" > /dev/null
 
           # 让 resolv.conf 由 systemd-resolved 接管（DHCP 下发的 DNS 才会生效）
           sudo ln -sf /run/systemd/resolve/stub-resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
@@ -144,26 +180,18 @@ jobs:
           # 验证 apt 可用（模拟安装，不实际改动）
           sudo chroot "$ROOTFS_DIR" bash -c "apt-get update && apt-get -s install -y curl >/dev/null" || true
 
-          # 确认网卡固件已随 rootfs 打包（rtl_nic=Realtek 有线，iwlwifi=Intel 无线）
-          ls -1 "$ROOTFS_DIR/lib/firmware/rtl_nic" 2>/dev/null | head -5 || true
-          ls -1 "$ROOTFS_DIR/lib/firmware" 2>/dev/null | grep -i iwlwifi || true
-
-          # 清理 apt 缓存
+          # 清理 apt 缓存与索引，避免烧录后 apt 解析报错
           sudo chroot "$ROOTFS_DIR" apt-get clean
-          sudo rm -rf "$ROOTFS_DIR/var/lib/apt/lists/"*
-
-          # 卸载挂载点
-          sudo umount "$ROOTFS_DIR/dev" || true
-          sudo umount "$ROOTFS_DIR/proc" || true
-          sudo umount "$ROOTFS_DIR/sys" || true
+          sudo rm -rf "$ROOTFS_DIR/var/lib/apt/lists/"* || true
 
       - name: Package rootfs
         run: |
+          set -euo pipefail
           mkdir -p "$OUT_DIR"
-          sudo tar --numeric-owner -zcf "$OUT_DIR/rootfs.tar.gz" -C "$ROOTFS_DIR" .
+          sudo tar --numeric-owner --acls --xattrs -zcf "$OUT_DIR/rootfs.tar.gz" -C "$ROOTFS_DIR" .
           ls -lh "$OUT_DIR/rootfs.tar.gz"
 
-          # 生成校验文件
+          # 生成校验文件（分片后合并仍可用它校验）
           ( cd "$OUT_DIR" && sha256sum rootfs.tar.gz > rootfs.tar.gz.sha256 )
 
           # 若超过 1.9GB，拆分成多个小于 2GB 的分片
@@ -178,6 +206,7 @@ jobs:
 
       - name: Verify output files
         run: |
+          set -euo pipefail
           ls -lh "$OUT_DIR"
           test -f "$OUT_DIR/rootfs.tar.gz" || test -f "$OUT_DIR/rootfs.tar.gz.part-aa"
 
@@ -186,18 +215,26 @@ jobs:
         with:
           allowUpdates: true
           replacesArtifacts: true
+          artifactErrorsFailBuild: true
           tag: rootfs-${{ env.DEBIAN_SUITE }}-latest
           name: rootfs-${{ env.DEBIAN_SUITE }}-latest
           artifacts: ${{ env.OUT_DIR }}/*
           body: |
             Debian ${{ env.DEBIAN_SUITE }} rootfs (x86_64)
-            包含：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm
-            网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
+
+            ====================🧊 固件信息 🧊=======================
+            ➦ 💻 固件平台：x86-64-linux
+            ➦ 🚀 内核版本：6.12.115（配合 kernel-image 发布使用）
+            ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm
+            ➦ 🔌 网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
+            =========================================================
 
             **初始 root 密码：`1234`**
             首次通过 SSH 登录会强制要求修改密码；FTP 需在改密后才能登录。
+
             若下载到的是 rootfs.tar.gz，直接解压：
               tar -xzf rootfs.tar.gz -C /目标分区
-            若下载到的是 rootfs.tar.gz.part-* 分片，先合并：
+
+            若下载到的是 rootfs.tar.gz.part-* 分片，先合并再校验：
               cat rootfs.tar.gz.part-* > rootfs.tar.gz
               sha256sum -c rootfs.tar.gz.sha256
