@@ -142,6 +142,9 @@ jobs:
           }
           trap cleanup EXIT
 
+          #MIRROR=https://mirrors.aliyun.com/debian/，但 rootfs 的 /etc/apt/sources.list 是否已指向它、/etc/resolv.conf 是否存在，都要确认。chroot 前加一句：
+          sudo cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
+          
           # 把安装脚本放进 rootfs 内再 chroot 执行
           sudo tee "$ROOTFS_DIR/tmp/install-lms.sh" >/dev/null <<'EOF'
           #!/bin/bash
