@@ -22,6 +22,8 @@ env:
   WORK_DIR: ${{ github.workspace }}/work
   IMG_FILE: ${{ github.workspace }}/work/debian-rootfs.img
   ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-bookworm-latest/rootfs.tar.gz
+  # 默认用「模块化」内核（带真实 .ko）。若要用「全内建」内核，
+  # 把下面两个 URL 末尾的 -%E6%A8%A1%E5%9D%97%E5%8C%96（-模块化）去掉即可。
   MODULES_URL: https://github.com/rmoyulong/Template/releases/download/kernel-modules-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8-%E6%A8%A1%E5%9D%97%E5%8C%96/modules.tar.gz
   BZIMAGE_URL: https://github.com/rmoyulong/Template/releases/download/kernel-image-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8-%E6%A8%A1%E5%9D%97%E5%8C%96/bzImage
 
@@ -91,8 +93,11 @@ jobs:
           sudo mount "${LOOP}p3" /mnt/rootfs
           sudo mount "${LOOP}p2" /mnt/efi
 
-          # 解压 rootfs，保留完整权限和符号链接
-          sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner
+          # 解压 rootfs，保留完整权限、符号链接与扩展属性
+          #   --acls --xattrs：必须与 build-rootfs.yml 的打包参数（--acls --xattrs）对应，
+          #   否则 xattr 丢失，依赖 file capability 的程序会失效（例如 ping 需要 cap_net_raw）。
+          sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs \
+            --numeric-owner --acls --xattrs
 
           # 清掉 rootfs 中可能残留的损坏 apt 缓存（避免烧录后 apt 解析报错）
           sudo rm -rf /mnt/rootfs/var/lib/apt/lists/* || true
@@ -116,6 +121,20 @@ jobs:
             fi
           done
           sudo ls -l /mnt/rootfs/root/ || true
+
+          # ---- 内嵌 rootfs.tar.gz，供 install-plus.sh 离线安装 ----
+          #   体积代价约 0.6~1GB；根分区剩余空间不够时只告警跳过，不中断构建。
+          ROOTFS_TGZ_MB=$(du -m "$WORK_DIR/rootfs.tar.gz" | cut -f1)
+          AVAIL_MB=$(df -Pm /mnt/rootfs | awk 'NR==2{print $4}')
+          if [ "$AVAIL_MB" -gt $((ROOTFS_TGZ_MB + 256)) ]; then
+            sudo cp "$WORK_DIR/rootfs.tar.gz" /mnt/rootfs/root/rootfs.tar.gz
+            sudo chmod 600 /mnt/rootfs/root/rootfs.tar.gz
+            echo "已内嵌 /root/rootfs.tar.gz（${ROOTFS_TGZ_MB}MB，根分区剩余 ${AVAIL_MB}MB）"
+          else
+            echo "WARN: 根分区仅剩 ${AVAIL_MB}MB，放不下 ${ROOTFS_TGZ_MB}MB，已跳过内嵌"
+            echo "      需要内嵌请调大 IMG_SIZE_MB（当前 ${IMG_SIZE_MB}MB）"
+          fi
+          sudo ls -lh /mnt/rootfs/root/
 
           # 解压 modules 到临时目录
           rm -rf /tmp/modules-extract
@@ -146,6 +165,10 @@ jobs:
           sudo mkdir -p /mnt/rootfs/lib/modules
           sudo rm -rf "/mnt/rootfs/lib/modules/$KVER"
           sudo mv "/tmp/modules-extract/$KVER" "/mnt/rootfs/lib/modules/$KVER"
+
+          # 复核：模块目录名必须真的等于 uname -r，否则开机后所有模块（含 USB/键盘）加载失败
+          test -d "/mnt/rootfs/lib/modules/$KVER" || { echo "ERROR: $KVER 模块目录缺失"; exit 1; }
+          echo "模块就位: $(ls "/mnt/rootfs/lib/modules/$KVER" | tr '\n' ' ')"
 
           # 放置内核（文件名同样必须与 uname -r 一致）
           sudo mkdir -p /mnt/rootfs/boot
@@ -196,9 +219,15 @@ jobs:
           CONFIG_RD_GZIP=y
           EOF
 
-          # 确保压缩方式为 gzip
+          # 确保压缩方式为 gzip；同时打进 framebuffer 与大部分模块
+          # MODULES=most：无线/声卡等 .ko 与其固件一并进 initramfs
+          # FRAMEBUFFER=y：initramfs 阶段启用帧缓冲控制台（Plymouth 需要）
           sudo mkdir -p /mnt/rootfs/etc/initramfs-tools
-          echo "COMPRESS=gzip" | sudo tee /mnt/rootfs/etc/initramfs-tools/initramfs.conf
+          sudo tee /mnt/rootfs/etc/initramfs-tools/initramfs.conf > /dev/null <<'EOF'
+          MODULES=most
+          COMPRESS=gzip
+          FRAMEBUFFER=y
+          EOF
 
           # depmod 和 initramfs
           sudo chroot /mnt/rootfs /bin/bash -c "depmod -a $KVER"
@@ -254,18 +283,24 @@ jobs:
 
           # 手动写 grub.cfg，LABEL + UUID 双根参数
           # 默认项带 quiet splash（Plymouth 开机画面）；recovery 项不带 splash，便于排查启动问题
+          # ★ insmod all_video + gfxpayload=keep：让 GRUB 设置图形模式，内核才能拿到帧缓冲，
+          #   Plymouth 才有画布（UEFI 走 GOP，传统 BIOS 走 VBE）。
+          # ★ console=tty1：控制台钉在 tty1；loglevel=3：压掉驱动刷屏，登录提示符不被冲走。
           echo "=== 写入 grub.cfg ==="
           sudo mkdir -p /mnt/rootfs/boot/grub
           sudo tee /mnt/rootfs/boot/grub/grub.cfg > /dev/null <<EOF
           set default=0
           set timeout=5
+          insmod all_video
+          set gfxmode=auto
+          set gfxpayload=keep
 
           menuentry "Debian ${KVER}" {
-              linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOTFS_UUID} rw quiet splash vt.global_cursor_default=0
+              linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOTFS_UUID} rw quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0
               initrd /boot/initrd.img-${KVER}
           }
           menuentry "Debian ${KVER} (recovery)" {
-              linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOTFS_UUID} rw single
+              linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOTFS_UUID} rw single console=tty1
               initrd /boot/initrd.img-${KVER}
           }
           EOF
@@ -353,10 +388,10 @@ jobs:
             sudo sh /root/install.sh
             ```
 
-            2) rootfs.tar.gz 版：先把 rootfs.tar.gz 放到 U 盘系统的 /root/
+            2) rootfs.tar.gz 版：镜像已内嵌 /root/rootfs.tar.gz，无需再手动拷贝
             ```bash
             sudo sh /root/install-plus.sh
-            # 也可显式指定压缩包路径：
+            # 也可显式指定其它压缩包路径：
             # sudo sh /root/install-plus.sh /path/to/rootfs.tar.gz
             ```
 

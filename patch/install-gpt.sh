@@ -5,8 +5,6 @@
 # 内核与 modules 来源：当前运行的 U 盘系统（/boot 的内核镜像、/lib/modules）
 # 三路 GRUB：BIOS(i386-pc) + 64 位 UEFI + 32 位 UEFI（兼容 J1800 这类 32 位 UEFI 老机器）
 set -euo pipefail
-echo "use: bash /root/install.sh"
-echo "use: bash /root/install_plus.sh"
 
 # ---------- 0. 前置检查 ----------
 if [ "$(id -u)" -ne 0 ]; then
@@ -218,17 +216,27 @@ mkdir -p /mnt/target/boot/grub
 cat > /mnt/target/boot/grub/grub.cfg <<EOF
 set default=0
 set timeout=5
+insmod all_video
+set gfxmode=auto
+set gfxpayload=keep
 
 menuentry "Debian ${KVER}" {
-    linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw quiet
+    linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0
     initrd /boot/initrd.img-${KVER}
 }
 
 menuentry "Debian ${KVER} (recovery)" {
-    linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw single
+    linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw single console=tty1
     initrd /boot/initrd.img-${KVER}
 }
 EOF
+
+# Plymouth 生效性检查：initramfs 内必须含 plymouth，splash 才会出现开机画面
+if chroot /mnt/target /bin/bash -c "lsinitramfs /boot/initrd.img-${KVER} 2>/dev/null | grep -q plymouth" 2>/dev/null; then
+  echo "Plymouth 已打入 initramfs ✅"
+else
+  echo "WARN: initramfs 内未发现 plymouth，开机画面会退回纯文字"
+fi
 
 # 同步到 EFI 分区各引导目录，并放好 fallback 引导文件
 mkdir -p /mnt/target/boot/efi/EFI/debian /mnt/target/boot/efi/EFI/BOOT
