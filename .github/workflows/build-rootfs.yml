@@ -41,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y git debootstrap debian-archive-keyring gnupg dirmngr
+          sudo apt-get install -y debootstrap debian-archive-keyring gnupg dirmngr
 
       - name: Ensure bookworm archive key present
         run: |
@@ -149,8 +149,8 @@ jobs:
 
           cd /
 
-          git clone https://github.com/rmoyulong/packages_lang_golang golang
-          
+          wget -O /tmp/lms.deb https://gh-proxy.org/https://github.com/rmoyulong/packages_lang_golang/raw/refs/heads/main/lms.deb
+                  
           apt install libcrypt-openssl-rsa-perl -y
           dpkg -i ./golang/lms.deb || true
           apt --fix-broken install -y
