@@ -23,7 +23,7 @@
 #   需要"bzImage 更小、驱动走模块"时：见 patch/j1900andj1800-RT-modular
 #
 
-# ---- 0. 模块支持（全内建也建议保留，便于日后切换/生成 modules.builtin）----
+# ---- 0. 模块支持（全内建也保留，便于生成 modules.builtin）----
 CONFIG_MODULES=y
 CONFIG_MODULE_UNLOAD=y
 
@@ -189,64 +189,62 @@ CONFIG_NETFILTER_XTABLES=y
 # ⚠️ defconfig 里这些默认是 =m。全内建模式下若不改成 =y，
 #    bzImage 里没有 USB 控制器驱动，而模块包又是空的（全内建不产 .ko）
 #    → 插上的 USB 键盘/鼠标完全不工作。这就是"能启动但不能打字"的根因。
+# ============================================================
+# ==========  USB & Input (全内建版必须严格内建)  ==============
+# ============================================================
+
+# 1. USB 核心与控制器 (Bay Trail 依赖 PCI 接口的 XHCI/EHCI)
 CONFIG_USB=y
 CONFIG_USB_COMMON=y
 CONFIG_USB_PCI=y
-# USB 3.0（Bay Trail 主要 USB 口）
 CONFIG_USB_XHCI_HCD=y
 CONFIG_USB_XHCI_PCI=y
-# USB 2.0
 CONFIG_USB_EHCI_HCD=y
 CONFIG_USB_EHCI_PCI=y
-# USB 1.1
-CONFIG_USB_OHCI_HCD=y
+CONFIG_USB_OHCI_HCD=y       # 建议保留，兼容老设备
 CONFIG_USB_OHCI_HCD_PCI=y
-# 老式 UHCI 控制器
-CONFIG_USB_UHCI_HCD=y
+CONFIG_USB_UHCI_HCD=y       # 建议保留，兼容老设备
 
-# ============================================================
-# ==========  12. 输入设备核心 + HID（键盘鼠标必需）  ==========
-# ============================================================
+# 2. HID 与输入子系统
 CONFIG_INPUT=y
 CONFIG_INPUT_KEYBOARD=y
-# AT/PS2 键盘（所有键盘的基础驱动）
 CONFIG_KEYBOARD_ATKBD=y
-CONFIG_INPUT_MOUSE=y
-# PS/2 鼠标
-CONFIG_MOUSE_PS2=y
-CONFIG_MOUSE_PS2_ALPS=y
-CONFIG_MOUSE_PS2_LOGIPS2PP=y
-CONFIG_MOUSE_PS2_SYNAPTICS=y
-CONFIG_MOUSE_PS2_CYPRESS=y
-CONFIG_MOUSE_PS2_TRACKPOINT=y
-CONFIG_MOUSE_PS2_ELANTECH=y
-CONFIG_MOUSE_PS2_SENTELIC=y
-CONFIG_MOUSE_PS2_TOUCHKIT=y
-CONFIG_MOUSE_PS2_FOCALTECH=y
-CONFIG_MOUSE_PS2_VMMOUSE=y
-CONFIG_INPUT_MOUSEDEV=y
+CONFIG_INPUT_MOUSE=y        # 建议保留，鼠标也依赖此框架
+CONFIG_MOUSE_PS2=y          # 建议保留
 CONFIG_HID=y
-# 通用 HID（USB 键盘的核心协议驱动）
-CONFIG_HID_GENERIC=y
-# USB HID 传输层（没有它 USB 键盘完全不工作）
-CONFIG_USB_HID=y
-CONFIG_HIDRAW=y
-CONFIG_UHID=y
-CONFIG_INPUT_EVDEV=y
+CONFIG_HID_GENERIC=y        # 关键：通用 USB 键盘驱动
+CONFIG_USB_HID=y            # 关键：USB HID 传输层
+CONFIG_INPUT_EVDEV=y        # 关键：用户空间输入事件接口
 
-# ============================================================
-# ==========  13. 控制台 / TTY（保证 tty 可输入）  ============
-# ============================================================
+# 3. 控制台与 TTY (保证屏幕输出和终端交互)
 CONFIG_TTY=y
 CONFIG_VT=y
-# VT 控制台（必须，否则 tty 打字无反应）
 CONFIG_VT_CONSOLE=y
-# CONFIG_HW_CONSOLE: 6.12 已无此符号，删除（VT=y 时控制台自动可用）
 CONFIG_SERIAL_8250=y
 CONFIG_SERIAL_8250_CONSOLE=y
 
-# ---- 14. 其他工控机常用 ----
-CONFIG_HPET_TIMER=y
-CONFIG_IKCONFIG=y
-CONFIG_IKCONFIG_PROC=y
-CONFIG_USB_STORAGE=y
+# ============================================================
+# ==========  CIFS/SMB File System Support (全内建)  ==========
+# ============================================================
+# 注意：全内建模式下，所有文件系统驱动必须 =y，直接编入 bzImage。
+# 不需要也不应该生成 cifs.ko 模块。
+
+CONFIG_CIFS=y
+CONFIG_CIFS_STATS=y
+CONFIG_CIFS_XATTR=y
+CONFIG_CIFS_POSIX=y
+CONFIG_CIFS_ACL=y
+CONFIG_CIFS_MD5=y
+CONFIG_CIFS_SHA2=y
+CONFIG_CIFS_HMAC_MD5=y
+CONFIG_CIFS_HMAC_SHA256=y
+CONFIG_CIFS_ALLOW_INSECURE_LEGACY=y
+
+# 全内建模式下，加密算法通常也建议内建，避免运行时依赖模块
+CONFIG_CRYPTO_MD5=y
+CONFIG_CRYPTO_SHA256=y
+CONFIG_CRYPTO_SHA512=y
+CONFIG_CRYPTO_SHA3=y
+CONFIG_CRYPTO_HMAC=y
+CONFIG_CRYPTO_ARC4=y
+
