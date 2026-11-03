@@ -17,12 +17,12 @@ jobs:
           # ---- RT 全内建：所有驱动编进 bzImage，部署只需一个文件 ----
           - config_type: RT实时内核
             tag: rt
-            fragment: patch/j1900andj1800-RT
+            fragment: patch/j1900andj1800-RT.config
             mode: 全内建（所有驱动编入 bzImage，modules 包只含元数据）
           # ---- RT 模块化：关键驱动内建，其余走模块 ----
           - config_type: RT实时内核-模块化
             tag: rt-mod
-            fragment: patch/j1900andj1800-RT-modular
+            fragment: patch/j1900andj1800-RT-modular.config
             mode: 关键驱动内建 + 其余模块化（需同时安装 modules.tar.gz）
     steps:
       - name: Checkout repository
