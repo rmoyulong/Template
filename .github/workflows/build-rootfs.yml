@@ -280,15 +280,13 @@ jobs:
           artifacts: ${{ env.OUT_DIR }}/*
           body: |
             Debian ${{ env.DEBIAN_SUITE }} rootfs (x86_64)
-
-            ====================🧊 固件信息 🧊=======================
+            ====================🧊固件信息🧊=======================
             ➦ 💻 固件平台：x86-64-linux
             ➦ 🚀 内核版本：6.12.115（配合 kernel-image 发布使用）
-            ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm
+            ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm / LMS
             ➦ 🔌 网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
             ➦ 🎨 开机画面：Plymouth（主题 spinner，GRUB 菜单停留 5 秒）
             =========================================================
-
             **初始 root 密码：`1234`**
             首次通过 SSH 登录会强制要求修改密码；FTP 需在改密后才能登录。
 
