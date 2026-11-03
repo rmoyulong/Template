@@ -262,9 +262,6 @@ jobs:
           # 首次开机生成 netplan 后端配置（可选，保险起见）
           sudo chroot "$ROOTFS_DIR" netplan generate || true
 
-          # 验证 apt 可用（模拟安装，不实际改动）
-          sudo chroot "$ROOTFS_DIR" bash -c "apt-get update && apt-get -s install -y curl >/dev/null" || true
-
           # 清理 apt 缓存与索引，避免烧录后 apt 解析报错
           sudo chroot "$ROOTFS_DIR" apt-get clean
           sudo rm -rf "$ROOTFS_DIR/var/lib/apt/lists/"* || true
