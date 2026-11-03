@@ -70,7 +70,7 @@ jobs:
             --arch=amd64 \
             --variant=minbase \
             --components=main,non-free-firmware \
-            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-iwlwifi,firmware-linux-free,cloud-guest-utils \
+            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-iwlwifi,firmware-linux-free,plymouth,plymouth-themes \
             "$DEBIAN_SUITE" "$ROOTFS_DIR" \
             "$MIRROR/"
 
@@ -166,6 +166,34 @@ jobs:
           sudo sed -i 's/^;*cgi.fix_pathinfo.*/cgi.fix_pathinfo=1/' \
             "$ROOTFS_DIR/etc/php/8.2/cgi/php.ini" || true
 
+          # ---------- Plymouth 开机画面（主题 spinner）----------
+          # 这里只写配置、不执行 plymouth-set-default-theme -R：
+          #   rootfs 阶段还没有目标内核，-R 会调用 update-initramfs 而失败。
+          #   真正的 initramfs 在 build-img-*.yml 里用目标内核重建，
+          #   届时 initramfs-tools 的 plymouth hook 会自动把主题打进去。
+          sudo mkdir -p "$ROOTFS_DIR/etc/plymouth"
+          sudo tee "$ROOTFS_DIR/etc/plymouth/plymouthd.conf" > /dev/null <<'EOF'
+          [Daemon]
+          Theme=spinner
+          ShowDelay=0
+          EOF
+          # 同步刷新 plymouth 的默认主题链接（不带 -R，安全）
+          sudo chroot "$ROOTFS_DIR" plymouth-set-default-theme spinner || true
+          echo "----- Plymouth 主题配置 -----"
+          sudo cat "$ROOTFS_DIR/etc/plymouth/plymouthd.conf"
+
+          # ---------- GRUB 默认参数 ----------
+          # 写进 rootfs：以后在目标机上跑 update-grub 时也保持同样的开机外观
+          sudo mkdir -p "$ROOTFS_DIR/etc/default"
+          sudo tee "$ROOTFS_DIR/etc/default/grub" > /dev/null <<'EOF'
+          GRUB_DEFAULT=0
+          GRUB_TIMEOUT=5
+          GRUB_DISTRIBUTOR="Debian"
+          GRUB_CMDLINE_LINUX_DEFAULT="quiet splash vt.global_cursor_default=0"
+          GRUB_CMDLINE_LINUX=""
+          GRUB_DISABLE_OS_PROBER=true
+          EOF
+
           # 启用服务开机自启
           sudo chroot "$ROOTFS_DIR" systemctl enable systemd-networkd || true
           sudo chroot "$ROOTFS_DIR" systemctl enable systemd-networkd-wait-online || true
@@ -221,18 +249,21 @@ jobs:
           artifacts: ${{ env.OUT_DIR }}/*
           body: |
             Debian ${{ env.DEBIAN_SUITE }} rootfs (x86_64)
-            ====================🧊固件信息🧊==================
+
+            ====================🧊 固件信息 🧊=======================
             ➦ 💻 固件平台：x86-64-linux
             ➦ 🚀 内核版本：6.12.115（配合 kernel-image 发布使用）
             ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm
             ➦ 🔌 网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
-            ------------------------------------------------
+            ➦ 🎨 开机画面：Plymouth（主题 spinner，GRUB 菜单停留 5 秒）
+            =========================================================
+
             **初始 root 密码：`1234`**
             首次通过 SSH 登录会强制要求修改密码；FTP 需在改密后才能登录。
-            ------------------------------------------------            
+
             若下载到的是 rootfs.tar.gz，直接解压：
-              tar -xzf rootfs.tar.gz -C /目标分区。
-            ------------------------------------------------   
+              tar -xzf rootfs.tar.gz -C /目标分区
+
             若下载到的是 rootfs.tar.gz.part-* 分片，先合并再校验：
               cat rootfs.tar.gz.part-* > rootfs.tar.gz
               sha256sum -c rootfs.tar.gz.sha256

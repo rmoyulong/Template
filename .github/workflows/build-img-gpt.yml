@@ -18,7 +18,7 @@ env:
   # 仅作兜底展示；真实版本号由 modules.tar.gz 内的目录名自动识别（如 6.12.115-rt）
   KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '6.12.115' }}
   # 从 4096 提升到 6144，给 rootfs + 运行期 apt 留足空间，避免写满产生半截缓存
-  IMG_SIZE_MB: 2500
+  IMG_SIZE_MB: 6144
   WORK_DIR: ${{ github.workspace }}/work
   IMG_FILE: ${{ github.workspace }}/work/debian-rootfs.img
   ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-bookworm-latest/rootfs.tar.gz
@@ -122,8 +122,8 @@ jobs:
           mkdir -p /tmp/modules-extract
           sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /tmp/modules-extract
 
-          # 版本号不写死：直接读包内顶层目录名
-          #   普通内核 → 6.12.115      RT 内核 → 6.12.115-rt
+          # 版本号不写死：直接读包内顶层目录名（如 6.12.115-rt）
+          #   若给模块化版单独设了 LOCALVERSION（如 -rt-mod），这里会自动识别
           KVER=""
           for d in /tmp/modules-extract/*/; do
             [ -d "$d" ] || continue
@@ -253,6 +253,7 @@ jobs:
           fi
 
           # 手动写 grub.cfg，LABEL + UUID 双根参数
+          # 默认项带 quiet splash（Plymouth 开机画面）；recovery 项不带 splash，便于排查启动问题
           echo "=== 写入 grub.cfg ==="
           sudo mkdir -p /mnt/rootfs/boot/grub
           sudo tee /mnt/rootfs/boot/grub/grub.cfg > /dev/null <<EOF
@@ -260,10 +261,21 @@ jobs:
           set timeout=5
 
           menuentry "Debian ${KVER}" {
-              linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOTFS_UUID} rw quiet
+              linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOTFS_UUID} rw quiet splash vt.global_cursor_default=0
+              initrd /boot/initrd.img-${KVER}
+          }
+          menuentry "Debian ${KVER} (recovery)" {
+              linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOTFS_UUID} rw single
               initrd /boot/initrd.img-${KVER}
           }
           EOF
+
+          # Plymouth 生效性检查：initramfs 里必须含 plymouth，splash 才有画面
+          if sudo chroot /mnt/rootfs /bin/bash -c "lsinitramfs /boot/initrd.img-$KVER 2>/dev/null | grep -q plymouth"; then
+            echo "Plymouth 已打入 initramfs ✅"
+          else
+            echo "WARN: initramfs 内未发现 plymouth，开机画面会退回纯文字（请确认 rootfs 装过 plymouth）"
+          fi
 
           # 把 grub.cfg 同步到所有 EFI 引导目录，避免部分主板读不到配置
           sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/efi/EFI/debian/grub.cfg 2>/dev/null || true

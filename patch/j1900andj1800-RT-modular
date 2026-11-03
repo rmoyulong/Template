@@ -13,7 +13,7 @@
 #   =m（模块）：声卡、无线网卡、蓝牙、额外有线网卡、额外文件系统、SoC 板级音频
 #        → bzImage 更小、换硬件不必重编，装机后由 udev 自动加载
 #
-#   本模式会生成 /lib/modules/6.12.115-rt/*.ko（十几~几十 MB），
+#   本模式会生成 /lib/modules/6.12.115-rt-mod/*.ko（十几~几十 MB），
 #   安装时必须把 modules.tar.gz 一并解压到目标盘 /lib/modules/。
 #   （build-img-mbr.yml / build-img-gpt.yml 的 Populate rootfs 步骤已自动处理）
 #
@@ -26,7 +26,7 @@ CONFIG_MODULES=y
 CONFIG_MODULE_UNLOAD=y
 
 # ---- 1. 本地版本与抢占模型 ----
-CONFIG_LOCALVERSION="-rt"
+CONFIG_LOCALVERSION="-rt-mod"
 CONFIG_EXPERT=y
 CONFIG_PREEMPT_RT=y
 CONFIG_HZ_1000=y
