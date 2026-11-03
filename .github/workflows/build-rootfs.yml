@@ -41,7 +41,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y debootstrap debian-archive-keyring gnupg dirmngr
+          sudo apt-get install -y git debootstrap debian-archive-keyring gnupg dirmngr
 
       - name: Ensure bookworm archive key present
         run: |
