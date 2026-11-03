@@ -142,6 +142,37 @@ jobs:
           }
           trap cleanup EXIT
 
+          # 把安装脚本放进 rootfs 内再 chroot 执行
+          sudo tee "$ROOTFS_DIR/tmp/install-lms.sh" >/dev/null <<'EOF'
+          #!/bin/bash
+          set -euo pipefail
+
+          cd /
+
+          wget -O /tmp/lms.deb https://github.com/rmoyulong/armbian/raw/refs/heads/main/lms/lms.deb
+
+          apt install libcrypt-openssl-rsa-perl -y
+          dpkg -i /tmp/lms.deb || true
+          apt --fix-broken install -y
+
+          rm -rf /var/lib/squeezeboxserver
+          rm -rf /var/log/squeezeboxserver
+
+          mkdir -p /var/lib/squeezeboxserver/prefs
+          mkdir -p /var/lib/squeezeboxserver/cache
+          mkdir -p /var/log/squeezeboxserver
+
+          chown squeezeboxserver:nogroup /var/lib/squeezeboxserver/prefs
+          chown -R squeezeboxserver:nogroup /var/lib/squeezeboxserver/cache
+          chown -R squeezeboxserver:nogroup /var/log/squeezeboxserver
+
+          rm -f /tmp/lms.deb
+          EOF
+
+          sudo chmod +x "$ROOTFS_DIR/tmp/install-lms.sh"
+
+          sudo chroot "$ROOTFS_DIR" /bin/bash /tmp/install-lms.sh          
+
           # 主机名（debootstrap 默认会拷 runner 的 hostname，这里固定掉）
           printf 'debian\n' | sudo tee "$ROOTFS_DIR/etc/hostname" > /dev/null
           printf '127.0.0.1\tlocalhost\n127.0.1.1\tdebian\n' | sudo tee "$ROOTFS_DIR/etc/hosts" > /dev/null
