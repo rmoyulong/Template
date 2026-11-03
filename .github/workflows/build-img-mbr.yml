@@ -115,20 +115,6 @@ jobs:
           done
           sudo ls -l /mnt/rootfs/root/ || true
 
-          # ---- 内嵌 rootfs.tar.gz，供 install-plus.sh 离线安装 ----
-          #   体积代价约 0.6~1GB；根分区剩余空间不够时只告警跳过，不中断构建。
-          ROOTFS_TGZ_MB=$(du -m "$WORK_DIR/rootfs.tar.gz" | cut -f1)
-          AVAIL_MB=$(df -Pm /mnt/rootfs | awk 'NR==2{print $4}')
-          if [ "$AVAIL_MB" -gt $((ROOTFS_TGZ_MB + 256)) ]; then
-            sudo cp "$WORK_DIR/rootfs.tar.gz" /mnt/rootfs/root/rootfs.tar.gz
-            sudo chmod 600 /mnt/rootfs/root/rootfs.tar.gz
-            echo "已内嵌 /root/rootfs.tar.gz（${ROOTFS_TGZ_MB}MB，根分区剩余 ${AVAIL_MB}MB）"
-          else
-            echo "WARN: 根分区仅剩 ${AVAIL_MB}MB，放不下 ${ROOTFS_TGZ_MB}MB，已跳过内嵌"
-            echo "      需要内嵌请调大 IMG_SIZE_MB（当前 ${IMG_SIZE_MB}MB）"
-          fi
-          sudo ls -lh /mnt/rootfs/root/
-
           # 解压 modules
           rm -rf /tmp/modules-extract
           mkdir -p /tmp/modules-extract
@@ -356,8 +342,11 @@ jobs:
             sudo sh /root/install.sh
             ```
 
-            2) rootfs.tar.gz 版：镜像已内嵌 /root/rootfs.tar.gz，无需再手动拷贝
+            2) rootfs.tar.gz 版：需自备 rootfs.tar.gz
+            镜像未内嵌该包（内嵌会让镜像体积翻倍），请自行放到 U 盘系统的 /root/ 下：
             ```bash
+            # 本机可联网时直接下载（也可用 scp 从别处传入 /root/rootfs.tar.gz）
+            sudo wget -O /root/rootfs.tar.gz ${{ env.ROOTFS_URL }}
             sudo sh /root/install-plus.sh
             # 也可显式指定其它压缩包路径：
             # sudo sh /root/install-plus.sh /path/to/rootfs.tar.gz
