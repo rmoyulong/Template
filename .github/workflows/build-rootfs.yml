@@ -16,7 +16,7 @@ permissions:
 
 env:
   DEBIAN_SUITE: ${{ github.event.inputs.debian_suite || 'bookworm' }}
-  MIRROR: http://mirrors.tuna.tsinghua.edu.cn/debian
+  MIRROR: https://mirrors.aliyun.com/debian/
   ROOTFS_DIR: ${{ github.workspace }}/rootfs
   OUT_DIR: ${{ github.workspace }}/out
 
