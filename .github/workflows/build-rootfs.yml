@@ -118,7 +118,7 @@ jobs:
           EOF
           echo "----- 99-lms-network.conf -----"
           cat "$ROOTFS_DIR/etc/sysctl.d/99-lms-network.conf"
-          
+
       - name: Configure netplan (DHCP dynamic IP)
         run: |
           set -euo pipefail
@@ -163,7 +163,7 @@ jobs:
           sudo rm -f "$ROOTFS_DIR/etc/resolv.conf"
           sudo cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
 
-          # 把安装脚本放进 rootfs 内再 chroot 执行
+          # 把 LMS 安装脚本放进 rootfs 内再 chroot 执行
           sudo tee "$ROOTFS_DIR/tmp/install-lms.sh" >/dev/null <<'EOF'
           #!/bin/bash
           set -euo pipefail
@@ -174,13 +174,13 @@ jobs:
           apt-get install -y git ca-certificates libcrypt-openssl-rsa-perl
 
           git clone --depth=1 https://github.com/rmoyulong/packages_lang_golang/ /golang
-          
+
           # rootfs 是新建的，目录本不存在；rm -rf 仅为幂等清理，可保留也可删
           rm -rf /var/lib/squeezeboxserver /var/log/squeezeboxserver
 
           mkdir -p /var/lib/squeezeboxserver/prefs
           mkdir -p /var/lib/squeezeboxserver/cache
-          mkdir -p /var/log/squeezeboxserver          
+          mkdir -p /var/log/squeezeboxserver
 
           # 先安装 deb（创建 squeezeboxserver 用户），失败也继续，靠 fix-broken 补依赖
           dpkg -i /golang/lms.deb || true
@@ -194,9 +194,7 @@ jobs:
 
           rm -rf /golang
           EOF
-
           sudo chmod +x "$ROOTFS_DIR/tmp/install-lms.sh"
-
           sudo chroot "$ROOTFS_DIR" /bin/bash /tmp/install-lms.sh
 
           # 主机名（debootstrap 默认会拷 runner 的 hostname，这里固定掉）
@@ -239,14 +237,50 @@ jobs:
           echo "----- Plymouth 主题配置 -----"
           sudo cat "$ROOTFS_DIR/etc/plymouth/plymouthd.conf"
 
+          # ---------- initramfs 固件 hook ----------
+          # 【为什么需要】内建（=y）的 iwlwifi 会在内核启动早期就请求固件，此刻真正的
+          #   rootfs 还没挂载，固件只能从 initramfs 里被找到；找不到就 dump 满屏寄存器、
+          #   把 Plymouth 画面冲掉，无线也用不了。这里把所有无线/网卡固件显式打进 initramfs。
+          #   模块化版由 initramfs-tools 自动处理，这个 hook 作为两个版本的统一兜底。
+          sudo mkdir -p "$ROOTFS_DIR/etc/initramfs-tools/hooks"
+          sudo tee "$ROOTFS_DIR/etc/initramfs-tools/hooks/zz-firmware" > /dev/null <<'HOOK'
+          #!/bin/sh
+          set -e
+          PREREQ=""
+          prereqs() { echo "$PREREQ"; }
+          case "$1" in
+            prereqs) prereqs; exit 0 ;;
+          esac
+          if [ -r /usr/share/initramfs-tools/hook-functions ]; then
+            . /usr/share/initramfs-tools/hook-functions
+          fi
+          [ -n "${DESTDIR:-}" ] || { echo "zz-firmware: DESTDIR 未设置，跳过"; exit 0; }
+          mkdir -p "${DESTDIR}/lib/firmware"
+          for d in rtl_nic rtlwifi; do
+            if [ -d "/lib/firmware/$d" ]; then
+              mkdir -p "${DESTDIR}/lib/firmware/$d"
+              cp -a "/lib/firmware/$d/." "${DESTDIR}/lib/firmware/$d/" 2>/dev/null || true
+            fi
+          done
+          for f in /lib/firmware/iwlwifi-*.ucode; do
+            [ -e "$f" ] || continue
+            cp -a "$f" "${DESTDIR}/lib/firmware/" 2>/dev/null || true
+          done
+          exit 0
+          HOOK
+          sudo chmod 755 "$ROOTFS_DIR/etc/initramfs-tools/hooks/zz-firmware"
+          echo "----- initramfs 固件 hook -----"
+          sudo ls -l "$ROOTFS_DIR/etc/initramfs-tools/hooks/"
+
           # ---------- GRUB 默认参数 ----------
           # 写进 rootfs：以后在目标机上跑 update-grub 时也保持同样的开机外观
+          # （与 build-img-*.yml 里手写的 grub.cfg 保持一致）
           sudo mkdir -p "$ROOTFS_DIR/etc/default"
           sudo tee "$ROOTFS_DIR/etc/default/grub" > /dev/null <<'EOF'
           GRUB_DEFAULT=0
           GRUB_TIMEOUT=5
           GRUB_DISTRIBUTOR="Debian"
-          GRUB_CMDLINE_LINUX_DEFAULT="quiet splash vt.global_cursor_default=0"
+          GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0"
           GRUB_CMDLINE_LINUX=""
           GRUB_DISABLE_OS_PROBER=true
           EOF
@@ -303,13 +337,18 @@ jobs:
           artifacts: ${{ env.OUT_DIR }}/*
           body: |
             Debian ${{ env.DEBIAN_SUITE }} rootfs (x86_64)
-            ====================🧊固件信息🧊=======================
-            ➦ 💻 固件平台：x86-64-linux
-            ➦ 🚀 内核版本：6.12.115（配合 kernel-image 发布使用）
-            ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm / LMS
-            ➦ 🔌 网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
-            ➦ 🎨 开机画面：Plymouth（主题 spinner，GRUB 菜单停留 5 秒）
-            =========================================================
+
+            **🧊 固件信息**
+
+            - ➦ 💻 固件平台：x86-64-linux
+            - ➦ 🚀 内核版本：6.12.115（配合 kernel-image 发布使用）
+            - ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm / LMS
+            - ➦ 🔌 网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
+            - ➦ 🧩 initramfs：内置固件 hook（zz-firmware）+ FRAMEBUFFER，开机画面与无线早期可用
+            - ➦ 🎨 开机画面：Plymouth（主题 spinner，GRUB 菜单停留 5 秒）
+
+            ---
+
             **初始 root 密码：`1234`**
             首次通过 SSH 登录会强制要求修改密码；FTP 需在改密后才能登录。
 
