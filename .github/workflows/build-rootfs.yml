@@ -142,9 +142,11 @@ jobs:
           }
           trap cleanup EXIT
 
-          #MIRROR=https://mirrors.aliyun.com/debian/，但 rootfs 的 /etc/apt/sources.list 是否已指向它、/etc/resolv.conf 是否存在，都要确认。chroot 前加一句：
+          # chroot 内 DNS：rootfs 的 /etc/resolv.conf 可能是悬空 symlink，
+          # 直接 cp 会报 "not writing through dangling symlink"，故先删除再写
+          sudo rm -f "$ROOTFS_DIR/etc/resolv.conf"
           sudo cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
-          
+
           # 把安装脚本放进 rootfs 内再 chroot 执行
           sudo tee "$ROOTFS_DIR/tmp/install-lms.sh" >/dev/null <<'EOF'
           #!/bin/bash
@@ -155,7 +157,7 @@ jobs:
           apt-get update
           apt-get install -y git ca-certificates libcrypt-openssl-rsa-perl
           git clone https://github.com/rmoyulong/packages_lang_golang/ golang
-                  
+
           dpkg -i ./golang/lms.deb || true
           apt --fix-broken install -y
 
@@ -175,7 +177,7 @@ jobs:
 
           sudo chmod +x "$ROOTFS_DIR/tmp/install-lms.sh"
 
-          sudo chroot "$ROOTFS_DIR" /bin/bash /tmp/install-lms.sh          
+          sudo chroot "$ROOTFS_DIR" /bin/bash /tmp/install-lms.sh
 
           # 主机名（debootstrap 默认会拷 runner 的 hostname，这里固定掉）
           printf 'debian\n' | sudo tee "$ROOTFS_DIR/etc/hostname" > /dev/null
