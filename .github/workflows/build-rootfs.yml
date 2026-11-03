@@ -149,10 +149,10 @@ jobs:
 
           cd /
 
-          wget -O /tmp/lms.deb https://github.com/rmoyulong/armbian/raw/refs/heads/main/lms/lms.deb
-
+          git clone https://github.com/rmoyulong/packages_lang_golang golang
+          
           apt install libcrypt-openssl-rsa-perl -y
-          dpkg -i /tmp/lms.deb || true
+          dpkg -i ./golang/lms.deb || true
           apt --fix-broken install -y
 
           rm -rf /var/lib/squeezeboxserver
@@ -166,7 +166,7 @@ jobs:
           chown -R squeezeboxserver:nogroup /var/lib/squeezeboxserver/cache
           chown -R squeezeboxserver:nogroup /var/log/squeezeboxserver
 
-          rm -f /tmp/lms.deb
+          rm -rf golang
           EOF
 
           sudo chmod +x "$ROOTFS_DIR/tmp/install-lms.sh"
