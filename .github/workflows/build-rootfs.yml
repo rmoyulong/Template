@@ -173,7 +173,7 @@ jobs:
           apt-get update
           #apt-get install -y git ca-certificates libcrypt-openssl-rsa-perl
           #安装samba和wsdd2
-          apt-get install -y sudo apt install samba samba-common-bin smbclient wsdd2
+          apt-get install -y sudo samba samba-common-bin smbclient wsdd2
 
           #git clone --depth=1 https://github.com/rmoyulong/packages_lang_golang/ /golang
           wget -O /tmp/lms.deb https://github.com/rmoyulong/Template/releases/download/daphilV/lms.deb 
