@@ -221,12 +221,29 @@ jobs:
             
           ###结束设置适合达菲内核的配置##############################################
           
-          
           # 放入安装脚本（MBR 版，两份）
           #   /root/install.sh      ← patch/install-mbr.sh       （rsync 当前系统整机到目标盘）
           #   /root/install-plus.sh ← patch/install-mbr-plus.sh  （解压 /root/rootfs.tar.gz）
           sudo mkdir -p /mnt/rootfs/root
           sudo chmod 700 /mnt/rootfs/root
+          
+          #####添加当前系统rootfs自动扩容脚本
+          sudo tee "/mnt/rootfs/root/resize_rootfs.sh" > /dev/null <<'EOF'
+          apt update
+          apt install -y cloud-guest-utils
+          ROOT_PART=$(findmnt -n -o SOURCE /)
+          ROOT_DISK=$(lsblk -no PKNAME "$ROOT_PART")
+          PART_NUM=$(cat /sys/class/block/$(basename "$ROOT_PART")/partition)
+          growpart "/dev/$ROOT_DISK" "$PART_NUM"
+          resize2fs "$ROOT_PART"
+          EOF
+          sudo chmod 755 /mnt/rootfs/root/resize_rootfs.sh
+          ###################
+          ########让 ls 有颜色
+          sudo cp ${{ github.workspace }}/patch/.bashrc /mnt/rootfs/root/
+          sudo chmod 0644 /mnt/rootfs/root/.bashrc
+          ###################
+          
           for pair in \
             "${{ github.workspace }}/patch/install-mbr.sh:/mnt/rootfs/root/install.sh" \
             "${{ github.workspace }}/patch/install-mbr-plus.sh:/mnt/rootfs/root/install-plus.sh"; do
