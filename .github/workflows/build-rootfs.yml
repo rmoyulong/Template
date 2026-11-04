@@ -70,7 +70,7 @@ jobs:
             --arch=amd64 \
             --variant=minbase \
             --components=main,non-free-firmware \
-            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-iwlwifi,firmware-linux-free,plymouth,plymouth-themes,ffmpeg,squeezelite \
+            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-iwlwifi,firmware-linux-free,plymouth,plymouth-themes,ffmpeg,squeezelite,sudo,alsa-utils,alsa-tools,ethtool,cloud-guest-utils \
             "$DEBIAN_SUITE" "$ROOTFS_DIR" \
             "$MIRROR/"
 
@@ -118,6 +118,33 @@ jobs:
           EOF
           echo "----- 99-lms-network.conf -----"
           cat "$ROOTFS_DIR/etc/sysctl.d/99-lms-network.conf"
+          
+          #sudo mkdir -p "$ROOTFS_DIR/etc/default"
+          sudo rm $ROOTFS_DIR/etc/default/squeezelite
+          sudo tee "$ROOTFS_DIR/etc/default/squeezelite" > /dev/null <<'EOF'
+          # Defaults for squeezelite initscript
+          # sourced by /etc/init.d/squeezelite
+          # installed at /etc/default/squeezelite by the maintainer scripts
+
+          # The name for the squeezelite player:
+          SL_NAME="Squeezelite"
+
+          # ALSA output device:
+          #SL_SOUNDCARD="hw:CARD=Device,DEV=0" 
+          SL_SOUNDCARD="hw:0,0"
+          # Squeezebox server (Logitech Media Server):
+          # Uncomment the next line if you want to point squeezelite at the IP address of
+          # your squeezebox server. This is usually unnecessary as the server is
+          # automatically discovered.
+          #SB_SERVER_IP="192.168.x.y"
+
+          # Additional options to pass to squeezelite:
+          # Please do not include -z to make squeezelite daemonise itself.
+          SB_EXTRA_ARGS="-D dop -p 99 -b 4096:6892"
+
+          EOF
+          echo "----- /etc/default/squeezelite -----"
+          cat "$ROOTFS_DIR/etc/default/squeezelite"          
 
       - name: Configure netplan (DHCP dynamic IP)
         run: |
