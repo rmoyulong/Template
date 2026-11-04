@@ -100,91 +100,23 @@ jobs:
           sudo mkdir -p /mnt/rootfs/mnt/aliyundrive /mnt/rootfs/mnt/boot /mnt/rootfs/mnt/rootfs /mnt/rootfs/mnt/music
           sudo mkdir -p /mnt/rootfs/mnt/sd /mnt/rootfs/mnt/usb /mnt/rootfs/mnt/NAS
           
-            #声卡alsa配置
-            #sudo mkdir -p "/mnt/rootfs/etc"
-            sudo tee "/mnt/rootfs/etc/asound.conf" > /dev/null <<'EOF'
-            pcm.!default {
-                    type hw
-                    card 0
-                    device 0
-            }
-
-            ctl.!default {
-                    type hw
-                    card 0
-            }
-            EOF
-            echo "----- /etc/asound.conf -----"
-            cat "/mnt/rootfs/etc/asound.conf"
+          #声卡alsa配置
+          #sudo mkdir -p "/mnt/rootfs/etc"
+          sudo cp ${{ github.workspace }}/patch/asound.conf /mnt/rootfs/etc/asound.conf
+          cat "/mnt/rootfs/etc/asound.conf"
             
-            #Squeezelite配置
-            #sudo mkdir -p "/mnt/rootfs/etc/default"
-            sudo tee "/mnt/rootfs/etc/default/squeezelite" > /dev/null <<'EOF'
-            # Defaults for squeezelite initscript
-            # sourced by /etc/init.d/squeezelite
-            # installed at /etc/default/squeezelite by the maintainer scripts
+          #Squeezelite配置
+          sudo cp ${{ github.workspace }}/patch/squeezelite /mnt/rootfs/etc/default/squeezelite
+          cat "/mnt/rootfs/etc/default/squeezelite"
 
-            # The name for the squeezelite player:
-            SL_NAME="Squeezelite"
-
-            # ALSA output device:
-            #SL_SOUNDCARD="hw:CARD=Device,DEV=0" 
-            SL_SOUNDCARD="hw:0,0"
-            # Squeezebox server (Logitech Media Server):
-            # Uncomment the next line if you want to point squeezelite at the IP address of
-            # your squeezebox server. This is usually unnecessary as the server is
-            # automatically discovered.
-            #SB_SERVER_IP="192.168.x.y"
-
-            # Additional options to pass to squeezelite:
-            # Please do not include -z to make squeezelite daemonise itself.
-            SB_EXTRA_ARGS="-D dop -p 99 -b 4096:6892"
-
-            EOF
-            echo "----- /etc/default/squeezelite -----"
-            cat "/mnt/rootfs/etc/default/squeezelite"
-
-            #samba配置
-            #sudo mkdir -p "/mnt/rootfs/etc/samba/smb.conf"
-            sudo tee "/mnt/rootfs/etc/samba/smb.conf" > /dev/null <<'EOF'
-            [global]
-            unix charset = UTF-8
-            map to guest = Bad User
-            security = user
-
-            [share_music]
-            comment = music share
-            path = /mnt/music
-            # writable
-            writable = yes
-            browseable = yes
-            public = yes
-            # guest OK
-            guest ok = yes
-            # guest only
-            guest only = yes
-            # fully accessed
-            create mode = 0777
-            # fully accessed
-            directory mode = 0777
-            EOF
-            echo "----- /etc/samba/smb.conf -----"
-            cat "/mnt/rootfs/etc/samba/smb.conf"
+          #samba配置
+          #sudo mkdir -p "/mnt/rootfs/etc/samba/smb.conf"
+          sudo cp ${{ github.workspace }}/patch/smb.conf /mnt/rootfs/etc/samba/smb.conf
+          cat "/mnt/rootfs/etc/samba/smb.conf"
             
-            #wsdd2配置
-            #sudo mkdir -p "/mnt/rootfs/usr/lib/systemd/system"
-            sudo tee "/mnt/rootfs/usr/lib/systemd/system/wsdd2.service" > /dev/null <<'EOF'
-            [Unit]
-            Description=WSDD2 Name Service Daemon
-
-            [Service]
-            ExecStart=/usr/sbin/wsdd2
-
-            [Install]
-            WantedBy=multi-user.target
-            EOF
-            echo "----- /usr/lib/systemd/system/wsdd2.service -----"
-            cat "/mnt/rootfs/usr/lib/systemd/system/wsdd2.service"            
+          #wsdd2配置
+          sudo cp ${{ github.workspace }}/patch/sdd2.service mnt/rootfs/usr/lib/systemd/system/sdd2.service
+          cat "/mnt/rootfs/usr/lib/systemd/system/wsdd2.service"           
             
           ###结束设置适合6.12.115+内核的配置##############################################
           
@@ -195,19 +127,11 @@ jobs:
           sudo chmod 700 /mnt/rootfs/root
           
           #####添加当前系统rootfs自动扩容脚本
-          sudo tee "/mnt/rootfs/root/resize_rootfs.sh" > /dev/null <<'EOF'
-          apt update
-          apt install -y cloud-guest-utils
-          ROOT_PART=$(findmnt -n -o SOURCE /)
-          ROOT_DISK=$(lsblk -no PKNAME "$ROOT_PART")
-          PART_NUM=$(cat /sys/class/block/$(basename "$ROOT_PART")/partition)
-          growpart "/dev/$ROOT_DISK" "$PART_NUM"
-          resize2fs "$ROOT_PART"
-          EOF
+          sudo cp ${{ github.workspace }}/patch/resize_rootfs.sh /mnt/rootfs/root/resize_rootfs.sh
           sudo chmod 755 /mnt/rootfs/root/resize_rootfs.sh
           ###################
           ########让 ls 有颜色
-          sudo cp ${{ github.workspace }}/patch/.bashrc /mnt/rootfs/root/
+          sudo cp ${{ github.workspace }}/patch/.bashrc /mnt/rootfs/root/.bashrc
           sudo chmod 0644 /mnt/rootfs/root/.bashrc
           ###################
                     

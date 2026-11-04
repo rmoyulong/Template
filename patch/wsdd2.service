@@ -1,0 +1,8 @@
+[Unit]
+Description=WSDD2 Name Service Daemon
+
+[Service]
+ExecStart=/usr/sbin/wsdd2
+
+[Install]
+WantedBy=multi-user.target
