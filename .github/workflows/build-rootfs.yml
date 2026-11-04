@@ -119,6 +119,11 @@ jobs:
           echo "----- 99-lms-network.conf -----"
           cat "$ROOTFS_DIR/etc/sysctl.d/99-lms-network.conf"
 
+          #wsdd2配置
+          sudo mkdir -p $ROOTFS_DIR/usr/lib/systemd/system
+          sudo cp ${{ github.workspace }}/patch/wsdd2.service $ROOTFS_DIR/usr/lib/systemd/system/wsdd2.service
+          cat "$ROOTFS_DIR/usr/lib/systemd/system/wsdd2.service"  
+
       - name: Configure netplan (DHCP dynamic IP)
         run: |
           set -euo pipefail
