@@ -310,15 +310,15 @@ jobs:
       - name: Create Release and upload
         uses: ncipollo/release-action@v1
         with:
-          tag: image-debian-MBR-latest
-          name: image-debian-MBR-latest
+          tag: image-debian-MBR-LMS-latest
+          name: image-debian-MBR-LMS-latest
           allowUpdates: true
           replacesArtifacts: true
           artifacts: |
             ${{ env.WORK_DIR }}/debian-rootfs-LMS-mbr.img.gz
             ${{ env.WORK_DIR }}/debian-rootfs-LMS-mbr.img.gz.sha256
           body: |
-            Debian IMG（MBR 兼容版）
+            Debian IMG（MBR 兼容版）-LMS
             分区表为 MBR，支持老 BIOS / 32 位 UEFI / 64 位 UEFI
             内核：${{ env.KVER }}
             初始 root 密码：1234
