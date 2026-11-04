@@ -115,7 +115,7 @@ jobs:
           cat "/mnt/rootfs/etc/samba/smb.conf"
             
           #wsdd2配置
-          #sudo mkdir -p "mnt/rootfs/usr/lib/systemd/system"
+          sudo mkdir -p "mnt/rootfs/usr/lib/systemd/system"
           sudo cp ${{ github.workspace }}/patch/wsdd2.service mnt/rootfs/usr/lib/systemd/system/wsdd2.service
           cat "/mnt/rootfs/usr/lib/systemd/system/wsdd2.service"              
             
