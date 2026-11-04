@@ -94,7 +94,134 @@ jobs:
 
           # 清掉 rootfs 中可能残留的损坏 apt 缓存（避免烧录后 apt 解析报错）
           sudo rm -rf /mnt/rootfs/var/lib/apt/lists/* || true
+          
+          ###设置适合达菲内核的配置##############################################
+          #/mnt子目录
+          sudo mkdir -p /mnt/rootfs/mnt/aliyundrive /mnt/rootfs/mnt/boot /mnt/rootfs/mnt/rootfs /mnt/rootfs/mnt/music
+          sudo mkdir -p /mnt/rootfs/mnt/sd /mnt/rootfs/mnt/usb /mnt/rootfs/mnt/NAS
+          
+            #声卡alsa配置
+            #sudo mkdir -p "/mnt/rootfs/etc"
+            sudo tee "/mnt/rootfs/etc/asound.conf" > /dev/null <<'EOF'
+            defaults.pcm.rate_converter "samplerate_best"
 
+            pcm.!default {
+                type plug
+                slave.pcm "softvol"
+            }
+
+            pcm.softvol {
+                type softvol
+                slave {
+                    pcm "dmixer"
+                }
+                control {
+                    name "Master"
+                    card "Loopback"
+                }
+            }
+
+            pcm.dmixer  {
+                type dmix
+                ipc_key 1024
+                ipc_key_add_uid false
+                ipc_perm 0666
+                    slave {
+                        pcm "card"
+                        period_time 0
+                        period_size 1024
+                        buffer_size 4096
+                        rate 48000
+                        channels 2
+                    }
+                    bindings {
+                        0 0
+                        1 1
+                    }
+            }
+
+            pcm.card {
+                type hw
+                card "Loopback"
+                device 0
+                subdevice 0
+            }
+            EOF
+            echo "----- /etc/asound.conf -----"
+            cat "/mnt/rootfs/etc/asound.conf"
+            
+            #Squeezelite配置
+            #sudo mkdir -p "/mnt/rootfs/etc/default"
+            sudo tee "/mnt/rootfs/etc/default/squeezelite" > /dev/null <<'EOF'
+            # Defaults for squeezelite initscript
+            # sourced by /etc/init.d/squeezelite
+            # installed at /etc/default/squeezelite by the maintainer scripts
+
+            # The name for the squeezelite player:
+            SL_NAME="Squeezelite"
+
+            # ALSA output device:
+            #SL_SOUNDCARD="hw:CARD=Device,DEV=0" 
+            SL_SOUNDCARD="hw:1,0"
+            # Squeezebox server (Logitech Media Server):
+            # Uncomment the next line if you want to point squeezelite at the IP address of
+            # your squeezebox server. This is usually unnecessary as the server is
+            # automatically discovered.
+            #SB_SERVER_IP="192.168.x.y"
+
+            # Additional options to pass to squeezelite:
+            # Please do not include -z to make squeezelite daemonise itself.
+            SB_EXTRA_ARGS="-D dop -p 99 -b 4096:6892"
+
+            EOF
+            echo "----- /etc/default/squeezelite -----"
+            cat "/mnt/rootfs/etc/default/squeezelite"
+
+            #samba配置
+            #sudo mkdir -p "/mnt/rootfs/etc/samba/smb.conf"
+            sudo tee "/mnt/rootfs/etc/samba/smb.conf" > /dev/null <<'EOF'
+            [global]
+            unix charset = UTF-8
+            map to guest = Bad User
+            security = user
+
+            [share_music]
+            comment = music share
+            path = /mnt/music
+            # writable
+            writable = yes
+            browseable = yes
+            public = yes
+            # guest OK
+            guest ok = yes
+            # guest only
+            guest only = yes
+            # fully accessed
+            create mode = 0777
+            # fully accessed
+            directory mode = 0777
+            EOF
+            echo "----- /etc/samba/smb.conf -----"
+            cat "/mnt/rootfs/etc/samba/smb.conf"
+            
+            #wsdd2配置
+            #sudo mkdir -p "/mnt/rootfs/usr/lib/systemd/system"
+            sudo tee "/mnt/rootfs/usr/lib/systemd/system/wsdd2.service" > /dev/null <<'EOF'
+            [Unit]
+            Description=WSDD2 Name Service Daemon
+
+            [Service]
+            ExecStart=/usr/sbin/wsdd2
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+            echo "----- /usr/lib/systemd/system/wsdd2.service -----"
+            cat "/mnt/rootfs/usr/lib/systemd/system/wsdd2.service"            
+            
+          ###结束设置适合达菲内核的配置##############################################
+          
+          
           # 放入安装脚本（MBR 版，两份）
           #   /root/install.sh      ← patch/install-mbr.sh       （rsync 当前系统整机到目标盘）
           #   /root/install-plus.sh ← patch/install-mbr-plus.sh  （解压 /root/rootfs.tar.gz）
