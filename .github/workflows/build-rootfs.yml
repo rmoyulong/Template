@@ -170,10 +170,11 @@ jobs:
 
           cd /
 
-          apt-get update
-          apt-get install -y git ca-certificates libcrypt-openssl-rsa-perl
+          #apt-get update
+          #apt-get install -y git ca-certificates libcrypt-openssl-rsa-perl
 
-          git clone --depth=1 https://github.com/rmoyulong/packages_lang_golang/ /golang
+          #git clone --depth=1 https://github.com/rmoyulong/packages_lang_golang/ /golang
+          wget -O /tmp/lms.deb https://github.com/rmoyulong/Template/releases/download/daphilV/lms.deb 
 
           # rootfs 是新建的，目录本不存在；rm -rf 仅为幂等清理，可保留也可删
           rm -rf /var/lib/squeezeboxserver /var/log/squeezeboxserver
@@ -192,7 +193,8 @@ jobs:
           #chown -R squeezeboxserver:nogroup /var/lib/squeezeboxserver/cache
           #chown -R squeezeboxserver:nogroup /var/log/squeezeboxserver
 
-          rm -rf /golang
+          #rm -rf /golang
+          rm -f /tmp/lms.deb
           EOF
           sudo chmod +x "$ROOTFS_DIR/tmp/install-lms.sh"
           sudo chroot "$ROOTFS_DIR" /bin/bash /tmp/install-lms.sh
