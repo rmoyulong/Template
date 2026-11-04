@@ -211,7 +211,7 @@ jobs:
           mkdir -p /var/log/squeezeboxserver
 
           # 先安装 deb（创建 squeezeboxserver 用户），失败也继续，靠 fix-broken 补依赖
-          dpkg -i /golang/lms.deb || true
+          dpkg -i /tmp/lms.deb || true
           apt-get --fix-broken install -y
 
           # 确认用户已存在，否则后面 chown 会给出晦涩错误
