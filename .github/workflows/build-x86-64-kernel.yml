@@ -17,12 +17,12 @@ jobs:
           # ---- RT 全内建：所有驱动编进 bzImage，部署只需一个文件 ----
           - config_type: RT实时内核
             tag: rt
-            fragment: patch/j1900andj1800-RT.config
+            fragment: patch/j1900andj1800-RT
             mode: 全内建（所有驱动编入 bzImage，modules 包只含元数据）
           # ---- RT 模块化：关键驱动内建，其余走模块 ----
           - config_type: RT实时内核-模块化
             tag: rt-mod
-            fragment: patch/j1900andj1800-RT-modular.config
+            fragment: patch/j1900andj1800-RT-modular
             mode: 关键驱动内建 + 其余模块化（需同时安装 modules.tar.gz）
     steps:
       - name: Checkout repository
@@ -188,19 +188,55 @@ jobs:
       - name: 打包内核模块
         run: |
           set -euo pipefail
-          cd ${{ github.workspace }}/modules-staging/lib/modules
-          KVER_DIR=$(ls -d */ | head -1)
-          KVER_DIR=${KVER_DIR%/}
+          MODROOT="${{ github.workspace }}/modules-staging/lib/modules"
+          [ -d "$MODROOT" ] || { echo "ERROR: 模块暂存目录不存在: $MODROOT" >&2; exit 1; }
+          cd "$MODROOT"
+
+          # 版本目录不用 "ls -d */ | head -1" 碰运气：
+          # 目录按字母序排列时 "6.12.115-rt-mod" 会排在 "6.12.115-rt" 前面，
+          # 一旦同名残留多个版本就会静默取错。这里逐个校验格式，只认唯一命中。
+          KVER_DIR=""
+          for d in */; do
+            [ -d "$d" ] || continue
+            name="${d%/}"
+            case "$name" in
+              [0-9]*.[0-9]*)
+                if [ -n "$KVER_DIR" ]; then
+                  echo "ERROR: 发现多个版本目录（$KVER_DIR 与 $name），无法判断该打包哪个" >&2
+                  ls -la
+                  exit 1
+                fi
+                KVER_DIR="$name"
+                ;;
+            esac
+          done
+          [ -n "$KVER_DIR" ] || { echo "ERROR: 未能识别版本目录" >&2; ls -la; exit 1; }
           echo "模块目录: $KVER_DIR"
           # build / source / vmlinux 等位于版本子目录内部
           sudo rm -f "$KVER_DIR/build" "$KVER_DIR/source" \
                        "$KVER_DIR/vmlinux" "$KVER_DIR/System.map"
           sudo find . \( -name "*.o" -o -name "*.cmd" -o -name ".tmp_*" \) -delete
-          sudo find . -name "*.ko" -exec strip --strip-debug {} \;
-          sudo find . -name "*.ko" -exec objcopy --remove-section .BTF {} \;
-          sudo tar zcf ../modules.tar.gz .
+          # 瘦身：去调试段、去 BTF。段不存在时 objcopy 仅告警、退出码仍为 0，
+          # 这里再加 || true 只是防御，不影响构建。
+          sudo find . -name "*.ko" -exec strip --strip-debug {} \; || true
+          sudo find . -name "*.ko" -exec objcopy --remove-section .BTF {} \; || true
+
+          # 与 rootfs 打包统一使用 numeric-owner；
+          # .ko 不含 file capability，因此不需要 --xattrs/--acls。
+          sudo tar --numeric-owner -zcf ../modules.tar.gz .
+
           ls -lh ../modules.tar.gz
-          echo "包内 .ko 数量: $(tar tzf ../modules.tar.gz | grep -c '\.ko$')"
+          echo "包内 .ko 数量: $(tar tzf ../modules.tar.gz | grep -c '\.ko$' || true)"
+
+          # 关键校验：包内顶层目录必须与 $KVER_DIR 一致，
+          # 把 "目录名 ≠ uname -r" 这类错当场拦下，而不是等到装机后模块加载失败。
+          PKG_KVER=$(tar tzf ../modules.tar.gz | sed 's|^\./||' | cut -d/ -f1 | grep -v '^$' | sort -u | head -1)
+          echo "包内顶层目录: $PKG_KVER"
+          if [ "$PKG_KVER" != "$KVER_DIR" ]; then
+            echo "ERROR: 包内顶层目录（$PKG_KVER）与预期（$KVER_DIR）不一致" >&2
+            exit 1
+          fi
+          echo "OK: 包结构与 uname -r 一致: $KVER_DIR"
 
       - name: 上传内核镜像
         uses: ncipollo/release-action@v1

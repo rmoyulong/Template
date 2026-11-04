@@ -145,7 +145,9 @@ mkdir -p /mnt/target
 mount "$P3" /mnt/target
 
 echo "解压 rootfs 到目标盘（文件较大，请耐心等待）..."
-if ! tar -xzf "$ROOTFS_TARBALL" -C /mnt/target --numeric-owner; then
+# --xattrs --acls 必须与打包端（build-rootfs.yml: tar --acls --xattrs）对应；
+# 少了它们，文件 capability（如 ping 的 cap_net_raw）与 POSIX ACL 会在解压时静默丢失。
+if ! tar -xzf "$ROOTFS_TARBALL" -C /mnt/target --numeric-owner --xattrs --acls; then
   echo "解压失败：请检查目标盘剩余空间与压缩包完整性" >&2
   exit 1
 fi
@@ -217,6 +219,29 @@ if [ ! -f /mnt/target/boot/grub/i386-pc/normal.mod ]; then
   echo "[warn] chroot BIOS 安装失败，使用宿主机 grub 回退"
   grub-install --target=i386-pc --boot-directory=/mnt/target/boot --force "$TARGET" || true
 fi
+
+# --- 固化 initramfs 配置：与 CI 构建镜像保持一致 ---
+# CI 里显式设了 MODULES=most + FRAMEBUFFER=y；目标系统若仍是 Debian 默认值，
+# initramfs 可能不含帧缓冲，GRUB 的 splash 就出不来开机画面。
+# 已存在则改、不存在则追加，不动其它自定义项。
+echo "固化 initramfs 配置（MODULES=most, FRAMEBUFFER=y）..."
+chroot /mnt/target /bin/bash -c '
+set -e
+CONF=/etc/initramfs-tools/initramfs.conf
+mkdir -p /etc/initramfs-tools
+[ -f "$CONF" ] || : > "$CONF"
+set_kv() {
+  key="$1"; val="$2"
+  if grep -qE "^[[:space:]]*${key}=" "$CONF"; then
+    sed -i -E "s|^[[:space:]]*${key}=.*|${key}=${val}|" "$CONF"
+  else
+    printf "%s=%s\n" "$key" "$val" >> "$CONF"
+  fi
+}
+set_kv MODULES most
+set_kv FRAMEBUFFER y
+grep -E "^(MODULES|FRAMEBUFFER)=" "$CONF" || true
+'
 
 # 重建 initramfs（避免源盘 UUID/resume 残留在 initrd 里）
 echo "重建 initramfs..."
