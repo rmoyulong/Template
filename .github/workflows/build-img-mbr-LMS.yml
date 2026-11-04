@@ -115,7 +115,7 @@ jobs:
           cat "/mnt/rootfs/etc/samba/smb.conf"
             
           #wsdd2配置
-          sudo cp ${{ github.workspace }}/patch/sdd2.service mnt/rootfs/usr/lib/systemd/system/sdd2.service
+          sudo cp ${{ github.workspace }}/patch/wsdd2.service mnt/rootfs/usr/lib/systemd/system/sdd2.service
           cat "/mnt/rootfs/usr/lib/systemd/system/wsdd2.service"            
             
           ###结束设置适合达菲内核的配置##############################################
