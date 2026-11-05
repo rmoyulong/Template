@@ -17,12 +17,12 @@ jobs:
           # ---- RT 全内建：所有驱动编进 bzImage，部署只需一个文件 ----
           - config_type: RT实时内核
             tag: rt
-            fragment: patch/j1900andj1800-RT
+            fragment: patch/j1900andj1800-RT.config
             mode: 全内建（所有驱动编入 bzImage，modules 包只含元数据）
           # ---- RT 模块化：关键驱动内建，其余走模块 ----
           - config_type: RT实时内核-模块化
             tag: rt-mod
-            fragment: patch/j1900andj1800-RT-modular
+            fragment: patch/j1900andj1800-RT-modular.config
             mode: 关键驱动内建 + 其余模块化（需同时安装 modules.tar.gz）
     steps:
       - name: Checkout repository
@@ -114,8 +114,24 @@ jobs:
             fi
             echo "本配置为模块化：关键驱动内建，其余走模块（=m）"
           else
-            # 全内建内核：=m 为 0 属正常，仅提示不报错
-            if [ "$MODCOUNT" -lt 1 ]; then
+            # 全内建内核：=m 必须为 0，出现任何一个都说明有驱动漏改成 =y。
+            # 这是构建期硬闸门：将来任何人（含自己）清理配置时误加 =m，CI 当场
+            # 失败并列出明细，不会悄悄混进 bzImage 之外的模块包。
+            #
+            # 判定用 CONFIG_LOCALVERSION 精确等于 "-rt"：不能简单 grep "-rt"，
+            # 否则会误命中模块化版的 "-rt-mod"。同时校验标签与片段一致，
+            # 防止"用模块化片段跑 rt 任务"这类错配。
+            LV="$(grep -E '^CONFIG_LOCALVERSION=' .config | head -1 | sed -E 's/^CONFIG_LOCALVERSION=//; s/^"//; s/"$//')"
+            if [ "${{ matrix.tag }}" != "rt" ]; then
+              echo "提示：本配置无 =m 模块"
+            elif [ "$LV" != "-rt" ]; then
+              echo "::error::全内建版标签为 rt，但 CONFIG_LOCALVERSION 为 \"$LV\"（期望 \"-rt\"），配置片段可能用错" >&2
+              exit 1
+            elif [ "$MODCOUNT" -gt 0 ]; then
+              echo "::error::全内建版（CONFIG_LOCALVERSION=-rt）不允许出现任何 =m，实际有 $MODCOUNT 个；请在配置片段中改为 =y" >&2
+              grep -E '^CONFIG_[A-Za-z0-9_]+=m$' .config | sed 's/^/    /' >&2
+              exit 1
+            else
               echo "提示：本配置为全内建（无 =m 模块），modules.tar.gz 将只含元数据，属正常现象"
             fi
           fi
