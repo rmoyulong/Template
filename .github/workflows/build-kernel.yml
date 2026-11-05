@@ -147,7 +147,7 @@ jobs:
             if grep -qE "^${k}=y$" .config; then
               echo "  [OK]   ${k}=y"
             else
-              echo "  [FAIL] ${k} 不是 =y（当前：$(grep -E "^${k}=" .config || echo '未设置'))"
+              echo "  [FAIL] ${k} 不是 =y（当前：$(grep -E "^${k}=" .config || echo '未设置')）"
               MISSING="$MISSING $k"
             fi
           done
@@ -156,6 +156,36 @@ jobs:
             exit 1
           fi
           echo "========================================================="
+
+          # ---- 家用外设品牌 HID 驱动断言 ----
+          # 背景：HID_LOGITECH 依赖 LEDS_CLASS，而 LEDS_CLASS 定义在 `if NEW_LEDS`
+          # 内部。若 NEW_LEDS 被误删或置 n，下面这些品牌驱动会被静默忽略（写了
+          # 等于没写），肉眼在片段里看不出来，装到机器上才发现罗技无线鼠标滚轮
+          # 失灵。这里在构建期就拦下。
+          # 策略差异：全内建版为 =y，模块化版为 =m，故品牌驱动只要求"不是 n"。
+          if grep -qE '^CONFIG_NEW_LEDS=y$' .config; then
+            echo "[OK]   CONFIG_NEW_LEDS=y（LEDS_CLASS 可见性前提）"
+          else
+            echo "::error::CONFIG_NEW_LEDS 不是 =y，HID_LOGITECH 等品牌驱动会被静默忽略" >&2
+            exit 1
+          fi
+          BRAND_HID="CONFIG_LEDS_CLASS CONFIG_HID_LOGITECH CONFIG_HID_LOGITECH_DJ \
+                     CONFIG_HID_MICROSOFT CONFIG_HID_A4TECH CONFIG_HID_CHERRY \
+                     CONFIG_HID_REDRAGON CONFIG_HID_APPLE"
+          BRAND_MISSING=""
+          for k in $BRAND_HID; do
+            v="$(grep -E "^${k}=(y|m)$" .config || true)"
+            if [ -n "$v" ]; then
+              echo "  [OK]   $v"
+            else
+              echo "  [FAIL] ${k} 未启用（当前：$(grep -E "^${k}=" .config || echo '缺失或为 n')）"
+              BRAND_MISSING="$BRAND_MISSING $k"
+            fi
+          done
+          if [ -n "$BRAND_MISSING" ]; then
+            echo "::error::家用品牌 HID 驱动未启用（y/m 均可），罗技/微软等键鼠可能失灵：$BRAND_MISSING" >&2
+            exit 1
+          fi
 
           # ---- 压缩算法断言：必须 zstd ----
           # KERNEL_GZIP / KERNEL_ZSTD 是同一 choice 组的成员。若片段里的

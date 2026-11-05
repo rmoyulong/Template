@@ -34,6 +34,8 @@
 # - 拥塞控制：CONFIG_DEFAULT_BBR=y，否则 olddefconfig 会按 choice 退回 cubic。
 # - 内核压缩：zstd（解压速度约为 gzip 的 2~3 倍，开机更快；构建机需装 zstd）。
 # - CIFS/SMB：保留，便于访问 NAS 共享。
+# - 外设：品牌专用 HID 驱动（罗技 / 微软 / 双飞燕 / 樱桃 / 红龙 / 苹果）已内建，
+#   罗技无线（Unifying 接收器）依赖 HID_LOGITECH_DJ，已一并开启（见 11.1 节）。
 #
 # 注意：本版 IWLWIFI=y（内建）。内建无线驱动会在内核启动早期就去加载固件，
 #   而此时真正的 rootfs 还没挂载，固件只可能在 initramfs 里被找到。
@@ -191,6 +193,23 @@ CONFIG_USB_HID=y
 CONFIG_HIDRAW=y
 CONFIG_UHID=y
 
+# ---- 11.1 品牌专用 HID 驱动（家里常见的有线 / 无线键鼠）----
+# 说明：让罗技 / 微软等品牌的外设完整功能生效；不装也能用（走 HID_GENERIC），
+#   但罗技无线（Unifying 接收器）会被拆成"一个鼠标 + 一个键盘"的合体设备。
+# 注意：HID_LOGITECH 依赖 LEDS_CLASS，而 LEDS_CLASS 定义在 `if NEW_LEDS` 内部，
+#   所以 NEW_LEDS 必须一起打开，否则下面几行会被静默忽略（写了等于没写）。
+#   HID_LOGITECH_DJ = 无线接收器支持；HID_LOGITECH_HIDPP 已由它自动 select。
+CONFIG_NEW_LEDS=y
+CONFIG_LEDS_CLASS=y
+CONFIG_HID_LOGITECH=y
+CONFIG_HID_LOGITECH_DJ=y
+CONFIG_HID_LOGITECH_HIDPP=y
+CONFIG_HID_MICROSOFT=y
+CONFIG_HID_A4TECH=y
+CONFIG_HID_CHERRY=y
+CONFIG_HID_REDRAGON=y
+CONFIG_HID_APPLE=y
+
 # ============================================================
 # ========== 12. 控制台 / TTY（保证 tty 可输入） ============
 # ============================================================
@@ -318,28 +337,21 @@ CONFIG_CIFS_POSIX=y
 # CONFIG_PATA_OLDPIIX is not set
 # CONFIG_PATA_SCH is not set
 
-# ---- C8. HID 厂商专用 quirk（通用 HID 已覆盖绝大多数键鼠）----
-# 说明：这些是给特定品牌外设做的特性补丁（多媒体键、背光等）。
-#   关掉后普通键盘鼠标照常工作（走 HID_GENERIC），只是个别品牌的高级按键失效。
-#   若你用的正是某个品牌键鼠且需要它的特殊按键，把对应那行整行删掉即可。
-# CONFIG_HID_A4TECH is not set
-# CONFIG_HID_APPLE is not set
+# ---- C8. 其余 HID 厂商 quirk（家用常见的已在正文 11.1 开启）----
+# 说明：这里只留本机用不到的冷门品牌。罗技 / 微软 / 双飞燕 / 樱桃 / 红龙 / 苹果
+#   已在上方正文中开启；若你还有下列品牌的外设，把对应那行整行删掉即可。
 # CONFIG_HID_BELKIN is not set
-# CONFIG_HID_CHERRY is not set
 # CONFIG_HID_CHICONY is not set
 # CONFIG_HID_CYPRESS is not set
 # CONFIG_HID_EZKEY is not set
 # CONFIG_HID_GYRATION is not set
 # CONFIG_HID_ITE is not set
 # CONFIG_HID_KENSINGTON is not set
-# CONFIG_HID_LOGITECH is not set
-# CONFIG_HID_MICROSOFT is not set
 # CONFIG_HID_MONTEREY is not set
 # CONFIG_HID_NTRIG is not set
 # CONFIG_HID_PANTHERLORD is not set
 # CONFIG_HID_PETALYNX is not set
 # CONFIG_HID_PID is not set
-# CONFIG_HID_REDRAGON is not set
 # CONFIG_HID_SAMSUNG is not set
 # CONFIG_HID_SONY is not set
 # CONFIG_HID_SUNPLUS is not set
