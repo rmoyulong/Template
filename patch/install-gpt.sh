@@ -123,6 +123,10 @@ echo "根分区 UUID: $ROOT_UUID"
 mkdir -p /mnt/target
 mount "$P3" /mnt/target
 
+#/mnt子目录
+sudo mkdir -p /mnt/target/mnt/aliyundrive /mnt/target/mnt/boot /mnt/target/mnt/rootfs /mnt/target/mnt/music
+sudo mkdir -p /mnt/target/mnt/sd /mnt/target/mnt/usb /mnt/target/mnt/NAS 
+
 echo "同步当前系统到目标盘（文件较多，请耐心等待）..."
 # -x：不跨文件系统（EFI 挂载点等自动跳过）
 # 排除伪文件系统、临时目录，以及 rootfs.tar.gz（避免把安装包也拷进去占空间）

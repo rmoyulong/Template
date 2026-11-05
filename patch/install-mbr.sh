@@ -126,6 +126,10 @@ rsync -aAXHSx --numeric-ids \
   --exclude=/rootfs.tar.gz --exclude=/root/rootfs.tar.gz \
   --exclude='/root/rootfs.tar.gz.part-*' \
   / /mnt/target/
+  
+#/mnt子目录
+sudo mkdir -p /mnt/target/mnt/aliyundrive /mnt/target/mnt/boot /mnt/target/mnt/rootfs /mnt/target/mnt/music
+sudo mkdir -p /mnt/target/mnt/sd /mnt/target/mnt/usb /mnt/target/mnt/NAS  
 
 echo "补入当前系统的内核与模块..."
 # 模块：单独拷贝（rsync 已排除 /lib/modules）
