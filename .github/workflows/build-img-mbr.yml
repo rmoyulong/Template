@@ -122,8 +122,8 @@ jobs:
             
           #wsdd2配置
           #sudo mkdir -p "mnt/rootfs/usr/lib/systemd/system"
-          sudo cp ${{ github.workspace }}/patch/wsdd2.service mnt/rootfs/usr/lib/systemd/system/wsdd2.service
-          cat "/mnt/rootfs/usr/lib/systemd/system/wsdd2.service"           
+          #sudo cp ${{ github.workspace }}/patch/wsdd2.service mnt/rootfs/usr/lib/systemd/system/wsdd2.service
+          #cat "/mnt/rootfs/usr/lib/systemd/system/wsdd2.service"           
             
           ###结束设置适合6.12.115+内核的配置##############################################
           

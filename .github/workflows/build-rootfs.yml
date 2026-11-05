@@ -118,10 +118,11 @@ jobs:
           EOF
           echo "----- 99-lms-network.conf -----"
           cat "$ROOTFS_DIR/etc/sysctl.d/99-lms-network.conf"
-          
-          #wsdd2配置
-          sudo mkdir -p "$ROOTFS_DIR/usr/lib/systemd/system"
-          sudo cp ${{ github.workspace }}/patch/wsdd2.service $ROOTFS_DIR/usr/lib/systemd/system/wsdd2.service
+
+          # wsdd2 的服务单元由 wsdd2 包自带（包内路径 /lib/systemd/system/wsdd2.service，
+          # 二进制 /usr/sbin/wsdd2），因此这里不再手动从 patch/ 拷贝。
+          # 原先的拷贝其实也是无效动作：该步骤在 chroot 安装 wsdd2 之前执行，
+          # dpkg 解包时会用包内同名文件覆盖掉它。已移除。
 
       - name: Configure netplan (DHCP dynamic IP)
         run: |
@@ -176,11 +177,12 @@ jobs:
 
           apt-get update
           #apt-get install -y git ca-certificates libcrypt-openssl-rsa-perl
-          #安装samba和wsdd2
+
+          #安装 samba 和 wsdd2
           apt-get install -y sudo samba samba-common-bin smbclient wsdd2
 
           #git clone --depth=1 https://github.com/rmoyulong/packages_lang_golang/ /golang
-          wget -O /tmp/lms.deb https://github.com/rmoyulong/Template/releases/download/daphilV/lms.deb 
+          wget -O /tmp/lms.deb https://github.com/rmoyulong/Template/releases/download/daphilV/lms.deb
 
           # rootfs 是新建的，目录本不存在；rm -rf 仅为幂等清理，可保留也可删
           rm -rf /var/lib/squeezeboxserver /var/log/squeezeboxserver
@@ -204,7 +206,7 @@ jobs:
           EOF
           sudo chmod +x "$ROOTFS_DIR/tmp/install-lms.sh"
           sudo chroot "$ROOTFS_DIR" /bin/bash /tmp/install-lms.sh
-          
+
           # 主机名（debootstrap 默认会拷 runner 的 hostname，这里固定掉）
           printf 'debian\n' | sudo tee "$ROOTFS_DIR/etc/hostname" > /dev/null
           printf '127.0.0.1\tlocalhost\n127.0.1.1\tdebian\n' | sudo tee "$ROOTFS_DIR/etc/hosts" > /dev/null
