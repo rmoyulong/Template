@@ -60,6 +60,12 @@ CONFIG_HIGH_RES_TIMERS=y
 # CONFIG_KERNEL_GZIP is not set
 CONFIG_KERNEL_ZSTD=y
 
+# ---- 1c. CPU 数量上限（微优化）----
+# x86_64_defconfig 默认 NR_CPUS=64，会为 64 个"可能的 CPU"预留 per-cpu
+#   数据结构，而本机（J1800 / J1900 / N3540）最多 4 核。降到 8 足够。
+#   注：x86_64 下该符号取值范围是 2~512，8 合法。
+CONFIG_NR_CPUS=8
+
 # ---- 2. 电源管理（RT 下用 Performance，避免引入延迟）----
 CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y
 CONFIG_INTEL_IDLE=y

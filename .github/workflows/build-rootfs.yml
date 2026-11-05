@@ -70,7 +70,7 @@ jobs:
             --arch=amd64 \
             --variant=minbase \
             --components=main,non-free-firmware \
-            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-iwlwifi,firmware-linux-free,plymouth,plymouth-themes,ffmpeg,squeezelite,sudo,alsa-utils,alsa-tools,ethtool,cloud-guest-utils \
+            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.2-cgi,php8.2-fpm,php8.2-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-iwlwifi,firmware-linux-free,plymouth,plymouth-themes,ffmpeg,squeezelite \
             "$DEBIAN_SUITE" "$ROOTFS_DIR" \
             "$MIRROR/"
 
@@ -118,11 +118,6 @@ jobs:
           EOF
           echo "----- 99-lms-network.conf -----"
           cat "$ROOTFS_DIR/etc/sysctl.d/99-lms-network.conf"
-          
-          #wsdd2配置
-          sudo mkdir -p "$ROOTFS_DIR/usr/lib/systemd/system"
-          sudo cp ${{ github.workspace }}/patch/wsdd2.service $ROOTFS_DIR/usr/lib/systemd/system/wsdd2.service
-          cat "$ROOTFS_DIR/usr/lib/systemd/system/wsdd2.service" 
 
       - name: Configure netplan (DHCP dynamic IP)
         run: |
@@ -176,12 +171,9 @@ jobs:
           cd /
 
           apt-get update
-          #apt-get install -y git ca-certificates libcrypt-openssl-rsa-perl
-          #安装samba和wsdd2
-          apt-get install -y sudo samba samba-common-bin smbclient wsdd2
+          apt-get install -y git ca-certificates libcrypt-openssl-rsa-perl
 
-          #git clone --depth=1 https://github.com/rmoyulong/packages_lang_golang/ /golang
-          wget -O /tmp/lms.deb https://github.com/rmoyulong/Template/releases/download/daphilV/lms.deb 
+          git clone --depth=1 https://github.com/rmoyulong/packages_lang_golang/ /golang
 
           # rootfs 是新建的，目录本不存在；rm -rf 仅为幂等清理，可保留也可删
           rm -rf /var/lib/squeezeboxserver /var/log/squeezeboxserver
@@ -191,7 +183,7 @@ jobs:
           mkdir -p /var/log/squeezeboxserver
 
           # 先安装 deb（创建 squeezeboxserver 用户），失败也继续，靠 fix-broken 补依赖
-          dpkg -i /tmp/lms.deb || true
+          dpkg -i /golang/lms.deb || true
           apt-get --fix-broken install -y
 
           # 确认用户已存在，否则后面 chown 会给出晦涩错误
@@ -200,8 +192,7 @@ jobs:
           #chown -R squeezeboxserver:nogroup /var/lib/squeezeboxserver/cache
           #chown -R squeezeboxserver:nogroup /var/log/squeezeboxserver
 
-          #rm -rf /golang
-          rm -f /tmp/lms.deb
+          rm -rf /golang
           EOF
           sudo chmod +x "$ROOTFS_DIR/tmp/install-lms.sh"
           sudo chroot "$ROOTFS_DIR" /bin/bash /tmp/install-lms.sh
@@ -274,7 +265,14 @@ jobs:
               cp -a "/lib/firmware/$d/." "${DESTDIR}/lib/firmware/$d/" 2>/dev/null || true
             fi
           done
-          for f in /lib/firmware/iwlwifi-*.ucode; do
+          # iwlwifi 固件收窄到本机实际使用的那一支：Intel Centrino Advanced-N
+          #   6205 在 iwlwifi 的设备表里对应 IWL_DEVICE_6005，固件前缀
+          #   iwlwifi-6000g2a-（见 drivers/net/wireless/intel/iwlwifi/cfg/6000.c）。
+          #   不这样收窄的话，firmware-iwlwifi 包里的 2000/5000/6000g2b/7260/
+          #   7265/8000/9000/ax2xx 等全部 ucode（约 20MB）都会塞进 initramfs。
+          #   ⚠ 若以后换用别的 Intel 无线卡（如 6x30 系列的 6000g2b、或 ax200），
+          #     把下面这行改回 /lib/firmware/iwlwifi-*.ucode 即可。
+          for f in /lib/firmware/iwlwifi-6000g2a-*.ucode; do
             [ -e "$f" ] || continue
             cp -a "$f" "${DESTDIR}/lib/firmware/" 2>/dev/null || true
           done
@@ -304,10 +302,6 @@ jobs:
           sudo chroot "$ROOTFS_DIR" systemctl enable nginx php8.2-fpm ssh vsftpd || true
           sudo chroot "$ROOTFS_DIR" systemctl enable systemd-timesyncd || true
           sudo chroot "$ROOTFS_DIR" systemctl enable fake-hwclock || true
-          sudo chroot "$ROOTFS_DIR" systemctl enable lyrionmusicserver || true
-          sudo chroot "$ROOTFS_DIR" systemctl enable squeezelite || true
-          sudo chroot "$ROOTFS_DIR" systemctl enable smbd || true
-          sudo chroot "$ROOTFS_DIR" systemctl enable wsdd2 || true
 
           # 首次开机生成 netplan 后端配置（可选，保险起见）
           sudo chroot "$ROOTFS_DIR" netplan generate || true
@@ -360,7 +354,7 @@ jobs:
             - ➦ 🚀 内核版本：6.12.115（配合 kernel-image 发布使用）
             - ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm / LMS
             - ➦ 🔌 网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
-            - ➦ 🧩 initramfs：MODULES=dep + COMPRESS=zstd + FRAMEBUFFER，体积最小、解压最快；另附固件 hook（zz-firmware）
+            - ➦ 🧩 initramfs：MODULES=dep + COMPRESS=zstd + FRAMEBUFFER，体积最小、解压最快；固件 hook（zz-firmware）只收 rtl_nic + iwlwifi-6000g2a
             - ➦ 🎨 开机画面：Plymouth（主题 spinner，GRUB 菜单停留 2 秒）
 
             ---

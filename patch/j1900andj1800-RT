@@ -28,6 +28,12 @@
 #   裁剪原则：只关本机没有的硬件；启动链路（SATA/USB/键鼠/显示/板载网卡/
 #   根文件系统）一律保持内建，绝对不会出现"改完起不来"。
 #
+# 【本版进一步收尾】
+#   1) 全内建版做到 0 个 =m：x86_64_defconfig 遗留的 13 项默认 =m
+#      （netfilter 一批 11 项 + X86_PKG_TEMP_THERMAL + EFIVAR_FS）已在正文中
+#      显式设为 =y，见第 2、7、9b 节。
+#   2) NR_CPUS 从 x86_64_defconfig 默认的 64 降到 8（本机最多 4 核），见第 1c 节。
+#
 # 保留的重要特性：
 # - 显示：FB + FB_VESA + DRM_SIMPLEDRM + SYSFB_SIMPLEFB，MBR/传统 BIOS 与
 #   UEFI 两条路都有帧缓冲，Plymouth 开机画面可显示（RT 下 i915 不可用）。
@@ -62,9 +68,21 @@ CONFIG_HIGH_RES_TIMERS=y
 # CONFIG_KERNEL_GZIP is not set
 CONFIG_KERNEL_ZSTD=y
 
-# ---- 2. 电源管理（RT 下用 Performance，避免引入延迟）----
+# ---- 1c. CPU 数量上限（全内建版微优化）----
+# x86_64_defconfig 默认 NR_CPUS=64，会为 64 个"可能的 CPU"预留 per-cpu
+#   数据结构（x86 每个支持 CPU 约合 8KB 内核镜像 + 相关数组），
+#   而本机（J1800 / J1900 / N3540）最多 4 核。降到 8 足够，省一点内存和
+#   启动时的 per-cpu 初始化开销。
+#   注：x86_64 下该符号取值范围是 2~512，8 合法，不会被 olddefconfig 丢弃。
+CONFIG_NR_CPUS=8
+
+# ---- 2. 电源管理 / 温度监控（RT 下用 Performance，避免引入延迟）----
 CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y
 CONFIG_INTEL_IDLE=y
+# CPU 封装温度监控（x86_64_defconfig 默认 =m）：全内建版显式设 =y。
+#   依赖 X86_THERMAL_VECTOR（x86_64 上恒为 y），可在 RT 下正常内建。
+CONFIG_THERMAL=y
+CONFIG_X86_PKG_TEMP_THERMAL=y
 
 # ---- 3. 显示 ----
 # 重要：6.12 中 DRM_I915 带 "depends on !PREEMPT_RT"，RT 内核下必然为 n，
@@ -118,6 +136,10 @@ CONFIG_IWLMVM=y
 CONFIG_EXT4_FS=y
 CONFIG_VFAT_FS=y
 CONFIG_MSDOS_FS=y
+# EFI 变量文件系统（x86_64_defconfig 默认 =m）：全内建版显式设 =y。
+#   不内建的话，efibootmgr、efivar 这类工具在纯 bzImage 部署下会不可用。
+#   依赖 EFI（=y），可正常内建。
+CONFIG_EFIVAR_FS=y
 CONFIG_NLS=y
 CONFIG_NLS_CODEPAGE_437=y
 CONFIG_NLS_ISO8859_1=y
@@ -151,6 +173,26 @@ CONFIG_NFT_COMPAT=y
 CONFIG_NFT_XFRM=y
 CONFIG_NF_CONNTRACK=y
 CONFIG_NETFILTER_XTABLES=y
+
+# ---- 9b. 全内建收尾：把 defconfig 默认的 =m 显式设为 =y ----
+# 下面这些符号在 x86_64_defconfig 里没有显式声明，而真实 Kconfig 里写着
+#   "default m if NETFILTER_ADVANCED=n"，所以最终 .config 里是 =m。
+#   全内建版要真正做到 0 个 =m，这里显式设 =y。
+#   依赖（NF_CONNTRACK / NF_NAT / NF_TABLES / NETFILTER_XTABLES / IP_NF_IPTABLES）
+#   上面都已经是 =y，不会被 olddefconfig 退回；这些项本身没有额外 depends。
+#   说明：NF_LOG_ARP / NF_LOG_IPV4 / NF_LOG_IPV6 / IP_NF_TARGET_MASQUERADE
+#   在 6.12 里是"向后兼容"空壳选项，只 select 对应新符号，设 =y 无副作用。
+CONFIG_NF_LOG_SYSLOG=y
+CONFIG_NETFILTER_XT_MARK=y
+CONFIG_NETFILTER_XT_TARGET_LOG=y
+CONFIG_NETFILTER_XT_NAT=y
+CONFIG_NETFILTER_XT_TARGET_MASQUERADE=y
+CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
+CONFIG_NF_LOG_ARP=y
+CONFIG_NF_LOG_IPV4=y
+CONFIG_IP_NF_NAT=y
+CONFIG_IP_NF_TARGET_MASQUERADE=y
+CONFIG_NF_LOG_IPV6=y
 
 # ============================================================
 # ========== 10. USB 主机控制器（键鼠/U盘必需，内建） ========
