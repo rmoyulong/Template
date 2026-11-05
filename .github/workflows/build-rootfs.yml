@@ -248,10 +248,10 @@ jobs:
           sudo cat "$ROOTFS_DIR/etc/plymouth/plymouthd.conf"
 
           # ---------- initramfs 固件 hook ----------
-          # 【为什么需要】内建（=y）的 iwlwifi 会在内核启动早期就请求固件，此刻真正的
-          #   rootfs 还没挂载，固件只能从 initramfs 里被找到；找不到就 dump 满屏寄存器、
-          #   把 Plymouth 画面冲掉，无线也用不了。这里把所有无线/网卡固件显式打进 initramfs。
-          #   模块化版由 initramfs-tools 自动处理，这个 hook 作为两个版本的统一兜底。
+          # 【为什么需要】有线网卡 RTL8111（r8169）的固件需在早期可用，显式打进
+          #   initramfs 以保证早期链路建立。
+          #   注：iwlwifi 已在下方 /etc/modprobe.d/iwlwifi.conf 中被 blacklist，
+          #   其固件不再收入 initramfs（驱动不加载，收了只是无谓增大体积）。
           sudo mkdir -p "$ROOTFS_DIR/etc/initramfs-tools/hooks"
           sudo tee "$ROOTFS_DIR/etc/initramfs-tools/hooks/zz-firmware" > /dev/null <<'HOOK'
           #!/bin/sh
@@ -275,17 +275,17 @@ jobs:
               cp -a "/lib/firmware/$d/." "${DESTDIR}/lib/firmware/$d/" 2>/dev/null || true
             fi
           done
-          # iwlwifi 固件收窄到本机实际使用的那一支：Intel Centrino Advanced-N
-          #   6205 在 iwlwifi 的设备表里对应 IWL_DEVICE_6005，固件前缀
-          #   iwlwifi-6000g2a-（见 drivers/net/wireless/intel/iwlwifi/cfg/6000.c）。
-          #   不这样收窄的话，firmware-iwlwifi 包里的 2000/5000/6000g2b/7260/
-          #   7265/8000/9000/ax2xx 等全部 ucode（约 20MB）都会塞进 initramfs。
-          #   ⚠ 若以后换用别的 Intel 无线卡（如 6x30 系列的 6000g2b、或 ax200），
-          #     把下面这行改回 /lib/firmware/iwlwifi-*.ucode 即可。
-          for f in /lib/firmware/iwlwifi-6000g2a-*.ucode; do
-            [ -e "$f" ] || continue
-            cp -a "$f" "${DESTDIR}/lib/firmware/" 2>/dev/null || true
-          done
+          # iwlwifi 固件不再收入 initramfs：
+          #   Intel Centrino Advanced-N 6205 已由 /etc/modprobe.d/iwlwifi.conf
+          #   屏蔽（blacklist iwlwifi），驱动不会加载，固件放入 initramfs 纯属
+          #   无谓增大体积，故移除。
+          #   ⚠ 若将来要重新启用无线（删掉 blacklist，并把内核配置里的
+          #     CONFIG_IWLWIFI 恢复为 =m/=y 后重编译），把下面这段加回，让早期的
+          #     固件请求能从 initramfs 得到满足：
+          #   for f in /lib/firmware/iwlwifi-6000g2a-*.ucode; do
+          #     [ -e "$f" ] || continue
+          #     cp -a "$f" "${DESTDIR}/lib/firmware/" 2>/dev/null || true
+          #   done
           exit 0
           HOOK
           sudo chmod 755 "$ROOTFS_DIR/etc/initramfs-tools/hooks/zz-firmware"
@@ -377,29 +377,32 @@ jobs:
           echo "----- /etc/modprobe.d/audio-disable-powersave.conf -----"
           sudo cat "$ROOTFS_DIR/etc/modprobe.d/audio-disable-powersave.conf"
 
-          # ---------- Intel 无线网卡（Centrino Advanced-N 6205）固件 DMA 超时修复 ----------
-          # 【为什么需要】在 J1800/N3540 等 Bay Trail 平台上，iwlwifi 启动时会在
-          # iwl_pcie_load_section() 里等 5 秒网卡完成固件写入（DMA 完成中断），
-          # 然后报 "Failed to load firmware chunk!" 并 dump 满屏寄存器。根因不是固件
-          # 文件缺失（loaded firmware version 那行能打印出来说明文件已解析成功），
-          # 而是 PCIe ASPM 省电让网卡在 DMA 过程中掉进低功耗状态，醒来超时。
-          # 两条配合：pcie_aspm=off 已写入 GRUB 内核命令行；这里再把 iwlwifi 自身
-          # 驱动层省电和 11n 关闭，作为双重兜底。
-          # 另：regulatory.db 缺失（"Direct firmware load for regulatory.db failed"）
-          # 由 wireless-regdb 包提供，已加入 debootstrap --include 列表。
+          # ---------- Intel 无线网卡（Centrino Advanced-N 6205）屏蔽 ----------
+          # 【背景】该卡（iwlwifi-6000g2a-*）在 J1800/N3540 等 Bay Trail 平台上
+          # 出现间歇性硬件级故障，失败位置在两种形态间漂移：
+          #   A) 读不到 EEPROM：bad EEPROM/OTP signature / EEPROM_GP=0xffffffff
+          #      / Unable to init EEPROM（寄存器读回全 1，设备在总线上不应答）；
+          #   B) 固件加载成功后跑数秒自崩：Hardware error detected / NMI_INTERRUPT_HOST，
+          #      随后 Failed to load firmware chunk（-110）并 dump 满屏寄存器。
+          # 【已逐一排除】关闭 PCIe ASPM（内核参数 pcie_aspm=off + setpci 复核
+          #   LnkCtl: ASPM Disabled）无效；iwlwifi power_save=0 / 11n_disable=1 无效；
+          #   blacklist intel_ips 无效（本机本就不加载该模块）；固件无新版本可用
+          #   （6000g2a-6.ucode 为官方唯一且末版）。判为该卡与平台的硬件/兼容性问题。
+          # 【处置】本机无线非必需（板载 RTL8111 有线正常），直接屏蔽 iwlwifi：
+          #   启动不再空转重试十余秒，dmesg 不再被寄存器 dump 刷屏。
+          # 【生效范围】blacklist 只对以模块方式构建（=m）的 iwlwifi 生效，即
+          #   -rt-mod 模块化版；全内建版（=y）内核里驱动在启动时即注册，blacklist
+          #   对它无效 —— 该版本靠内核配置里 CONFIG_IWLWIFI=n 实现（已同步改）。
+          # 【如何临时启用】blacklist 只挡自动加载，不挡手动：
+          #   sudo modprobe iwlwifi
+          #   若无接口，再做一次 PCI 复位后重扫：
+          #   echo 1 | sudo tee /sys/bus/pci/devices/0000:02:00.0/remove
+          #   sleep 3 && echo 1 | sudo tee /sys/bus/pci/rescan
           sudo tee "$ROOTFS_DIR/etc/modprobe.d/iwlwifi.conf" > /dev/null <<'EOF'
-          # Intel Centrino Advanced-N 6205 (iwlwifi-6000g2a-*) 在 Bay Trail 上的
-          # 固件写入超时（Failed to load firmware chunk, -110）修复：
-          # 1) 驱动层省电关闭（配合内核参数 pcie_aspm=off 才能起效）
-          # 2) 关闭 802.11n（6205 老固件在 n 模式下已知有 DMA 超时 bug）
-          # 3) 屏蔽 intel_ips：Intel Intelligent Power Sharing 会与 iwlwifi
-          #    争抢处理器的电源/时钟控制权，是 6205 出现 "Hardware error detected"
-          #    （固件运行中 NMI 自崩）的常见诱因。社区有同型号、同报错
-          #    （Could not load the [0] uCode section / Failed to run INIT ucode）
-          #    屏蔽该模块后恢复正常的案例。该模块若未加载则该项无副作用。
-          options iwlwifi power_save=0
-          options iwlwifi 11n_disable=1
-          blacklist intel_ips
+          # Intel Centrino Advanced-N 6205 在本平台存在硬件级间歇故障，
+          # 软件手段（ASPM、驱动省电、intel_ips、换固件）均已排除，故直接屏蔽。
+          # blacklist 只挡自动加载（udev），需要时仍可 `modprobe iwlwifi` 手动加载。
+          blacklist iwlwifi
           EOF
           echo "----- /etc/modprobe.d/iwlwifi.conf -----"
           sudo cat "$ROOTFS_DIR/etc/modprobe.d/iwlwifi.conf"
@@ -455,10 +458,10 @@ jobs:
             - ➦ 🚀 内核版本：6.12.115（配合 kernel-image 发布使用）
             - ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm / LMS
             - ➦ 🔌 网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
-            - ➦ 🧩 initramfs：MODULES=dep + COMPRESS=zstd + FRAMEBUFFER，体积最小、解压最快；固件 hook（zz-firmware）只收 rtl_nic + iwlwifi-6000g2a
+            - ➦ 🧩 initramfs：MODULES=dep + COMPRESS=zstd + FRAMEBUFFER，体积最小、解压最快；固件 hook（zz-firmware）只收 rtl_nic（iwlwifi 已屏蔽，其固件不再入 initramfs）
             - ➦ 🎨 开机画面：Plymouth（主题 spinner，GRUB 菜单停留 2 秒）
             - ➦ 🎵 音频：squeezelite 默认 plughw:0,0（自动采样率转换）+ HDA 关闭省电（options snd_hda_intel power_save=0），避免响一下就断
-            - ➦ 📶 无线：Intel Centrino Advanced-N 6205 三修复 —— 内核参数 pcie_aspm=off（关闭 PCIe ASPM 省电，解决固件写入 DMA 超时）+ iwlwifi power_save=0/11n_disable=1（驱动层兜底）+ 屏蔽 intel_ips（防其与 iwlwifi 争抢电源控制导致固件运行中自崩）；wireless-regdb 提供 regulatory.db
+            - ➦ 📶 无线：Intel Centrino Advanced-N 6205 判定为本平台硬件级间歇故障（ASPM 关闭 / 驱动省电 / intel_ips / 换固件均无效），已屏蔽 iwlwifi —— 启动不再空转重试、dmesg 不再被寄存器 dump 刷屏；本机以板载 RTL8111 有线联网（全内建版另将 CONFIG_IWLWIFI 置 n）
             - ➦ 🔊 音频：squeezelite 走 plughw 输出（自动采样率转换）+ 关闭 HDA 省电
 
             ---
