@@ -260,8 +260,8 @@ fi
 mkdir -p /mnt/target/boot/grub
 cat > /mnt/target/boot/grub/grub.cfg <<EOF
 set default=0
-# 开机等待从 5 秒降到 2 秒（每次开机固定的纯等待）；想改回来就写 5
-set timeout=2
+# 开机菜单停留 5 秒（与 rootfs 的 GRUB_TIMEOUT=5 保持一致）
+set timeout=5
 insmod all_video
 set gfxmode=auto
 set gfxpayload=keep

@@ -101,12 +101,6 @@ jobs:
           # 清掉 rootfs 中可能残留的损坏 apt 缓存（避免烧录后 apt 解析报错）
           sudo rm -rf /mnt/rootfs/var/lib/apt/lists/* || true
 
-          # 放入安装脚本（MBR 版，两份）
-          #   /root/install.sh      ← patch/install-mbr.sh       （rsync 当前系统整机到目标盘）
-          #   /root/install-plus.sh ← patch/install-mbr-plus.sh  （解压 /root/rootfs.tar.gz）
-          sudo mkdir -p /mnt/rootfs/root
-          sudo chmod 700 /mnt/rootfs/root
-          
           ###################################################
           #/mnt子目录
           sudo mkdir -p /mnt/rootfs/mnt/aliyundrive /mnt/rootfs/mnt/boot /mnt/rootfs/mnt/rootfs /mnt/rootfs/mnt/music
@@ -127,6 +121,11 @@ jobs:
           sudo chmod 0644 /mnt/rootfs/root/.bashrc
           ###################
           
+          # 放入安装脚本（MBR 版，两份）
+          #   /root/install.sh      ← patch/install-mbr.sh       （rsync 当前系统整机到目标盘）
+          #   /root/install-plus.sh ← patch/install-mbr-plus.sh  （解压 /root/rootfs.tar.gz）
+          sudo mkdir -p /mnt/rootfs/root
+          sudo chmod 700 /mnt/rootfs/root
           for pair in \
             "${{ github.workspace }}/patch/install-mbr.sh:/mnt/rootfs/root/install.sh" \
             "${{ github.workspace }}/patch/install-mbr-plus.sh:/mnt/rootfs/root/install-plus.sh"; do
@@ -297,9 +296,8 @@ jobs:
           sudo mkdir -p /mnt/rootfs/boot/grub
           sudo tee /mnt/rootfs/boot/grub/grub.cfg > /dev/null <<EOF
           set default=0
-          # 开机等待从 5 秒降到 2 秒：这是每次开机固定的纯等待，减 3 秒最直观。
-          # 想保留菜单停留久一点，改回 5 即可。
-          set timeout=2
+          # 开机菜单停留 5 秒（与 rootfs 的 GRUB_TIMEOUT=5 保持一致，避免 update-grub 后被改回）
+          set timeout=5
           insmod all_video
           set gfxmode=auto
           set gfxpayload=keep

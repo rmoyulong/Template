@@ -459,7 +459,7 @@ jobs:
             - ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm / LMS
             - ➦ 🔌 网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
             - ➦ 🧩 initramfs：MODULES=dep + COMPRESS=zstd + FRAMEBUFFER，体积最小、解压最快；固件 hook（zz-firmware）只收 rtl_nic（iwlwifi 已屏蔽，其固件不再入 initramfs）
-            - ➦ 🎨 开机画面：Plymouth（主题 spinner，GRUB 菜单停留 2 秒）
+            - ➦ 🎨 开机画面：Plymouth（主题 spinner，GRUB 菜单停留 5 秒）
             - ➦ 🎵 音频：squeezelite 默认 plughw:0,0（自动采样率转换）+ HDA 关闭省电（options snd_hda_intel power_save=0），避免响一下就断
             - ➦ 📶 无线：Intel Centrino Advanced-N 6205 判定为本平台硬件级间歇故障（ASPM 关闭 / 驱动省电 / intel_ips / 换固件均无效），已屏蔽 iwlwifi —— 启动不再空转重试、dmesg 不再被寄存器 dump 刷屏；本机以板载 RTL8111 有线联网（全内建版另将 CONFIG_IWLWIFI 置 n）
             - ➦ 🔊 音频：squeezelite 走 plughw 输出（自动采样率转换）+ 关闭 HDA 省电
