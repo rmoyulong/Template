@@ -304,6 +304,10 @@ jobs:
           sudo chroot "$ROOTFS_DIR" systemctl enable nginx php8.2-fpm ssh vsftpd || true
           sudo chroot "$ROOTFS_DIR" systemctl enable systemd-timesyncd || true
           sudo chroot "$ROOTFS_DIR" systemctl enable fake-hwclock || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable lyrionmusicserver || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable squeezelite || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable smbd || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable wsdd2 || true
 
           # 首次开机生成 netplan 后端配置（可选，保险起见）
           sudo chroot "$ROOTFS_DIR" netplan generate || true
