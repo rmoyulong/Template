@@ -247,51 +247,6 @@ jobs:
           echo "----- Plymouth 主题配置 -----"
           sudo cat "$ROOTFS_DIR/etc/plymouth/plymouthd.conf"
 
-          # ---------- initramfs 固件 hook ----------
-          # 【为什么需要】有线网卡 RTL8111（r8169）的固件需在早期可用，显式打进
-          #   initramfs 以保证早期链路建立。
-          #   注：iwlwifi 已在下方 /etc/modprobe.d/iwlwifi.conf 中被 blacklist，
-          #   其固件不再收入 initramfs（驱动不加载，收了只是无谓增大体积）。
-          sudo mkdir -p "$ROOTFS_DIR/etc/initramfs-tools/hooks"
-          sudo tee "$ROOTFS_DIR/etc/initramfs-tools/hooks/zz-firmware" > /dev/null <<'HOOK'
-          #!/bin/sh
-          set -e
-          PREREQ=""
-          prereqs() { echo "$PREREQ"; }
-          case "$1" in
-            prereqs) prereqs; exit 0 ;;
-          esac
-          if [ -r /usr/share/initramfs-tools/hook-functions ]; then
-            . /usr/share/initramfs-tools/hook-functions
-          fi
-          [ -n "${DESTDIR:-}" ] || { echo "zz-firmware: DESTDIR 未设置，跳过"; exit 0; }
-          mkdir -p "${DESTDIR}/lib/firmware"
-          # 只收 rtl_nic（板载 RTL8111 走 r8169，需要的正是它的固件）。
-          # 不再整份拷贝 rtlwifi（约 15MB，只有 Realtek 无线网卡才用得到，
-          # 而本机用的是 Intel 6205），initramfs 因此明显变小。
-          for d in rtl_nic; do
-            if [ -d "/lib/firmware/$d" ]; then
-              mkdir -p "${DESTDIR}/lib/firmware/$d"
-              cp -a "/lib/firmware/$d/." "${DESTDIR}/lib/firmware/$d/" 2>/dev/null || true
-            fi
-          done
-          # iwlwifi 固件不再收入 initramfs：
-          #   Intel Centrino Advanced-N 6205 已由 /etc/modprobe.d/iwlwifi.conf
-          #   屏蔽（blacklist iwlwifi），驱动不会加载，固件放入 initramfs 纯属
-          #   无谓增大体积，故移除。
-          #   ⚠ 若将来要重新启用无线（删掉 blacklist，并把内核配置里的
-          #     CONFIG_IWLWIFI 恢复为 =m/=y 后重编译），把下面这段加回，让早期的
-          #     固件请求能从 initramfs 得到满足：
-          #   for f in /lib/firmware/iwlwifi-6000g2a-*.ucode; do
-          #     [ -e "$f" ] || continue
-          #     cp -a "$f" "${DESTDIR}/lib/firmware/" 2>/dev/null || true
-          #   done
-          exit 0
-          HOOK
-          sudo chmod 755 "$ROOTFS_DIR/etc/initramfs-tools/hooks/zz-firmware"
-          echo "----- initramfs 固件 hook -----"
-          sudo ls -l "$ROOTFS_DIR/etc/initramfs-tools/hooks/"
-
           # ---------- GRUB 默认参数 ----------
           # 写进 rootfs：以后在目标机上跑 update-grub 时也保持同样的开机外观
           # （与 build-img-*.yml 里手写的 grub.cfg 保持一致）
@@ -376,43 +331,6 @@ jobs:
           sudo cat "$ROOTFS_DIR/etc/default/squeezelite"
           echo "----- /etc/modprobe.d/audio-disable-powersave.conf -----"
           sudo cat "$ROOTFS_DIR/etc/modprobe.d/audio-disable-powersave.conf"
-
-          # ---------- Intel 无线网卡（Centrino Advanced-N 6205）屏蔽 ----------
-          # 【背景】该卡（iwlwifi-6000g2a-*）在 J1800/N3540 等 Bay Trail 平台上
-          # 出现间歇性硬件级故障，失败位置在两种形态间漂移：
-          #   A) 读不到 EEPROM：bad EEPROM/OTP signature / EEPROM_GP=0xffffffff
-          #      / Unable to init EEPROM（寄存器读回全 1，设备在总线上不应答）；
-          #   B) 固件加载成功后跑数秒自崩：Hardware error detected / NMI_INTERRUPT_HOST，
-          #      随后 Failed to load firmware chunk（-110）并 dump 满屏寄存器。
-          # 【已逐一排除】关闭 PCIe ASPM（内核参数 pcie_aspm=off + setpci 复核
-          #   LnkCtl: ASPM Disabled）无效；iwlwifi power_save=0 / 11n_disable=1 无效；
-          #   blacklist intel_ips 无效（本机本就不加载该模块）；固件无新版本可用
-          #   （6000g2a-6.ucode 为官方唯一且末版）。判为该卡与平台的硬件/兼容性问题。
-          # 【处置】本机无线非必需（板载 RTL8111 有线正常），直接屏蔽 iwlwifi：
-          #   启动不再空转重试十余秒，dmesg 不再被寄存器 dump 刷屏。
-          # 【生效范围】blacklist 只对以模块方式构建（=m）的 iwlwifi 生效，即
-          #   -rt-mod 模块化版；全内建版（=y）内核里驱动在启动时即注册，blacklist
-          #   对它无效 —— 该版本靠内核配置里 CONFIG_IWLWIFI=n 实现（已同步改）。
-          # 【如何临时启用】blacklist 只挡自动加载，不挡手动：
-          #   sudo modprobe iwlwifi
-          #   若无接口，再做一次 PCI 复位后重扫：
-          #   echo 1 | sudo tee /sys/bus/pci/devices/0000:02:00.0/remove
-          #   sleep 3 && echo 1 | sudo tee /sys/bus/pci/rescan
-          sudo tee "$ROOTFS_DIR/etc/modprobe.d/iwlwifi.conf" > /dev/null <<'EOF'
-          # Intel Centrino Advanced-N 6205 在本平台存在硬件级间歇故障，
-          # 软件手段（ASPM、驱动省电、intel_ips、换固件）均已排除，故直接屏蔽。
-          # blacklist 只挡自动加载（udev），需要时仍可 `modprobe iwlwifi` 手动加载。
-          blacklist iwlwifi
-          EOF
-          echo "----- /etc/modprobe.d/iwlwifi.conf -----"
-          sudo cat "$ROOTFS_DIR/etc/modprobe.d/iwlwifi.conf"
-
-          # ---------- 3) 断言：防止将来被误改回 hw: 直通 ----------
-          grep -q '^SL_SOUNDCARD="plughw:' "$ROOTFS_DIR/etc/default/squeezelite" || {
-            echo " [FAIL] SL_SOUNDCARD 不是 plughw：hw 直通在采样率不匹配时会中断播放"
-            exit 1
-          }
-          echo " [OK] SL_SOUNDCARD 使用 plughw（自动采样率转换）"
 
       - name: Package rootfs
         run: |
