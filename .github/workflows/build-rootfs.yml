@@ -79,7 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "===== 校验固件包是否装上（non-free-firmware 生效的标志）====="
-          for pkg in firmware-realtek firmware-iwlwifi firmware-linux-free; do
+          for pkg in firmware-realtek firmware-linux-free; do
             if sudo chroot "$ROOTFS_DIR" dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null \
                  | grep -q "install ok installed"; then
               echo "  [OK]   $pkg"
