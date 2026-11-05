@@ -115,6 +115,10 @@ echo "根分区 UUID: $ROOT_UUID"
 mkdir -p /mnt/target
 mount "$P2" /mnt/target
 
+#/mnt子目录
+sudo mkdir -p /mnt/target/mnt/aliyundrive /mnt/target/mnt/boot /mnt/target/mnt/rootfs /mnt/target/mnt/music
+sudo mkdir -p /mnt/target/mnt/sd /mnt/target/mnt/usb /mnt/target/mnt/NAS 
+
 echo "同步当前系统到目标盘（文件较多，请耐心等待）..."
 # -x：不跨文件系统（EFI 挂载点等自动跳过）
 # 排除伪文件系统、临时目录，以及 rootfs.tar.gz（避免把安装包也拷进去占空间）
@@ -126,10 +130,6 @@ rsync -aAXHSx --numeric-ids \
   --exclude=/rootfs.tar.gz --exclude=/root/rootfs.tar.gz \
   --exclude='/root/rootfs.tar.gz.part-*' \
   / /mnt/target/
-  
-#/mnt子目录
-sudo mkdir -p /mnt/target/mnt/aliyundrive /mnt/target/mnt/boot /mnt/target/mnt/rootfs /mnt/target/mnt/music
-sudo mkdir -p /mnt/target/mnt/sd /mnt/target/mnt/usb /mnt/target/mnt/NAS  
 
 echo "补入当前系统的内核与模块..."
 # 模块：单独拷贝（rsync 已排除 /lib/modules）
@@ -246,7 +246,7 @@ set gfxmode=auto
 set gfxpayload=keep
 
 menuentry "Debian ${KVER}" {
-    linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0
+    linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0 pcie_aspm=off
     initrd /boot/initrd.img-${KVER}
 }
 

@@ -258,7 +258,7 @@ set gfxmode=auto
 set gfxpayload=keep
 
 menuentry "Debian ${KVER}" {
-    linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0
+    linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0 pcie_aspm=off
     initrd /boot/initrd.img-${KVER}
 }
 

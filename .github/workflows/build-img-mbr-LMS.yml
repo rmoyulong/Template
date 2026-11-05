@@ -101,38 +101,23 @@ jobs:
           # 清掉 rootfs 中可能残留的损坏 apt 缓存（避免烧录后 apt 解析报错）
           sudo rm -rf /mnt/rootfs/var/lib/apt/lists/* || true
 
-          ###设置适合达菲内核的配置##############################################
-          #/mnt子目录
-          sudo mkdir -p /mnt/rootfs/mnt/aliyundrive /mnt/rootfs/mnt/boot /mnt/rootfs/mnt/rootfs /mnt/rootfs/mnt/music
-          sudo mkdir -p /mnt/rootfs/mnt/sd /mnt/rootfs/mnt/usb /mnt/rootfs/mnt/NAS
-          
-          #声卡alsa配置
-          #sudo mkdir -p "/mnt/rootfs/etc"
-          sudo cp ${{ github.workspace }}/patch/asound.conf_daphile /mnt/rootfs/etc/asound.conf
-          cat "/mnt/rootfs/etc/asound.conf"
-            
-          #Squeezelite配置
-          sudo cp ${{ github.workspace }}/patch/squeezelite_daphile /mnt/rootfs/etc/default/squeezelite
-          cat "/mnt/rootfs/etc/default/squeezelite"
-
-          #samba配置
-          #sudo mkdir -p "/mnt/rootfs/etc/samba"
-          sudo cp ${{ github.workspace }}/patch/smb.conf /mnt/rootfs/etc/samba/smb.conf
-          cat "/mnt/rootfs/etc/samba/smb.conf"
-            
-          #wsdd2配置
-          #sudo mkdir -p "mnt/rootfs/usr/lib/systemd/system"
-          #sudo cp ${{ github.workspace }}/patch/wsdd2.service mnt/rootfs/usr/lib/systemd/system/wsdd2.service
-          #cat "/mnt/rootfs/usr/lib/systemd/system/wsdd2.service"              
-            
-          ###结束设置适合达菲内核的配置##############################################
-          
           # 放入安装脚本（MBR 版，两份）
           #   /root/install.sh      ← patch/install-mbr.sh       （rsync 当前系统整机到目标盘）
           #   /root/install-plus.sh ← patch/install-mbr-plus.sh  （解压 /root/rootfs.tar.gz）
           sudo mkdir -p /mnt/rootfs/root
           sudo chmod 700 /mnt/rootfs/root
+          
+          ###################################################
+          #/mnt子目录
+          sudo mkdir -p /mnt/rootfs/mnt/aliyundrive /mnt/rootfs/mnt/boot /mnt/rootfs/mnt/rootfs /mnt/rootfs/mnt/music
+          sudo mkdir -p /mnt/rootfs/mnt/sd /mnt/rootfs/mnt/usb /mnt/rootfs/mnt/NAS
 
+          #samba配置
+          #sudo mkdir -p "/mnt/rootfs/etc/samba"
+          sudo cp ${{ github.workspace }}/patch/smb.conf /mnt/rootfs/etc/samba/smb.conf
+          cat "/mnt/rootfs/etc/samba/smb.conf"
+          ###################################################          
+          
           #####添加当前系统rootfs自动扩容脚本
           sudo cp ${{ github.workspace }}/patch/resize_rootfs.sh /mnt/rootfs/root/resize_rootfs.sh
           sudo chmod 755 /mnt/rootfs/root/resize_rootfs.sh
@@ -320,7 +305,7 @@ jobs:
           set gfxpayload=keep
 
           menuentry "Debian ${KVER}" {
-              linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOTFS_UUID} rw quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0
+              linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOTFS_UUID} rw quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0 pcie_aspm=off
               initrd /boot/initrd.img-${KVER}
           }
           menuentry "Debian ${KVER} (recovery)" {
@@ -378,7 +363,7 @@ jobs:
           replacesArtifacts: true
           artifacts: |
             ${{ env.WORK_DIR }}/debian-rootfs-mbr-lms.img.gz
-            ${{ env.WORK_DIR }}/debian-rootfs-mbr-lms.img.gz.sha256
+            ${{ env.WORK_DIR }}/debian-rootfs-mbr-lms.gz.sha256
           body: |
             Debian IMG（MBR 兼容版）
             分区表为 MBR，支持老 BIOS / 32 位 UEFI / 64 位 UEFI
