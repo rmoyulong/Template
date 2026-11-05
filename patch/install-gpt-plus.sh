@@ -221,10 +221,14 @@ if [ ! -f /mnt/target/boot/grub/i386-pc/normal.mod ]; then
 fi
 
 # --- 固化 initramfs 配置：与 CI 构建镜像保持一致 ---
-# CI 里显式设了 MODULES=most + FRAMEBUFFER=y；目标系统若仍是 Debian 默认值，
-# initramfs 可能不含帧缓冲，GRUB 的 splash 就出不来开机画面。
+# MODULES=dep：只放入挂载根设备真正需要的模块，initramfs 最小化、开机最快。
+#   本机内核已把 SATA/USB 控制器、USB 存储、键鼠 HID、VT 控制台、ext4 全部
+#   内建，所以这里几乎不需要放任何 .ko。前提是 /boot/config-$(uname -r) 存在
+#   （本脚本已随内核一起把它拷到目标盘）；若被删掉，dep 会判断不准。
+# COMPRESS=zstd：initramfs 自身用 zstd 压缩，解压比 gzip 快 2~3 倍。
+# FRAMEBUFFER=y：initramfs 阶段启用帧缓冲，GRUB 的 splash 才有开机画面。
 # 已存在则改、不存在则追加，不动其它自定义项。
-echo "固化 initramfs 配置（MODULES=most, FRAMEBUFFER=y）..."
+echo "固化 initramfs 配置（MODULES=dep, COMPRESS=zstd, FRAMEBUFFER=y）..."
 chroot /mnt/target /bin/bash -c '
 set -e
 CONF=/etc/initramfs-tools/initramfs.conf
@@ -238,9 +242,10 @@ set_kv() {
     printf "%s=%s\n" "$key" "$val" >> "$CONF"
   fi
 }
-set_kv MODULES most
+set_kv MODULES dep
+set_kv COMPRESS zstd
 set_kv FRAMEBUFFER y
-grep -E "^(MODULES|FRAMEBUFFER)=" "$CONF" || true
+grep -E "^(MODULES|COMPRESS|FRAMEBUFFER)=" "$CONF" || true
 '
 
 # 重建 initramfs（避免源盘 UUID/resume 残留在 initrd 里）
@@ -255,7 +260,8 @@ fi
 mkdir -p /mnt/target/boot/grub
 cat > /mnt/target/boot/grub/grub.cfg <<EOF
 set default=0
-set timeout=5
+# 开机等待从 5 秒降到 2 秒（每次开机固定的纯等待）；想改回来就写 5
+set timeout=2
 insmod all_video
 set gfxmode=auto
 set gfxpayload=keep

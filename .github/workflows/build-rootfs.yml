@@ -122,7 +122,7 @@ jobs:
           #wsdd2配置
           sudo mkdir -p "$ROOTFS_DIR/usr/lib/systemd/system"
           sudo cp ${{ github.workspace }}/patch/wsdd2.service $ROOTFS_DIR/usr/lib/systemd/system/wsdd2.service
-          cat "$ROOTFS_DIR/usr/lib/systemd/system/wsdd2.service"  
+          cat "$ROOTFS_DIR/usr/lib/systemd/system/wsdd2.service" 
 
       - name: Configure netplan (DHCP dynamic IP)
         run: |
@@ -265,7 +265,10 @@ jobs:
           fi
           [ -n "${DESTDIR:-}" ] || { echo "zz-firmware: DESTDIR 未设置，跳过"; exit 0; }
           mkdir -p "${DESTDIR}/lib/firmware"
-          for d in rtl_nic rtlwifi; do
+          # 只收 rtl_nic（板载 RTL8111 走 r8169，需要的正是它的固件）。
+          # 不再整份拷贝 rtlwifi（约 15MB，只有 Realtek 无线网卡才用得到，
+          # 而本机用的是 Intel 6205），initramfs 因此明显变小。
+          for d in rtl_nic; do
             if [ -d "/lib/firmware/$d" ]; then
               mkdir -p "${DESTDIR}/lib/firmware/$d"
               cp -a "/lib/firmware/$d/." "${DESTDIR}/lib/firmware/$d/" 2>/dev/null || true
@@ -301,10 +304,6 @@ jobs:
           sudo chroot "$ROOTFS_DIR" systemctl enable nginx php8.2-fpm ssh vsftpd || true
           sudo chroot "$ROOTFS_DIR" systemctl enable systemd-timesyncd || true
           sudo chroot "$ROOTFS_DIR" systemctl enable fake-hwclock || true
-          sudo chroot "$ROOTFS_DIR" systemctl enable lyrionmusicserver || true
-          sudo chroot "$ROOTFS_DIR" systemctl enable squeezelite || true
-          sudo chroot "$ROOTFS_DIR" systemctl enable smbd || true
-          sudo chroot "$ROOTFS_DIR" systemctl enable wsdd2 || true
 
           # 首次开机生成 netplan 后端配置（可选，保险起见）
           sudo chroot "$ROOTFS_DIR" netplan generate || true
@@ -357,8 +356,8 @@ jobs:
             - ➦ 🚀 内核版本：6.12.115（配合 kernel-image 发布使用）
             - ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm / LMS
             - ➦ 🔌 网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
-            - ➦ 🧩 initramfs：内置固件 hook（zz-firmware）+ FRAMEBUFFER，开机画面与无线早期可用
-            - ➦ 🎨 开机画面：Plymouth（主题 spinner，GRUB 菜单停留 5 秒）
+            - ➦ 🧩 initramfs：MODULES=dep + COMPRESS=zstd + FRAMEBUFFER，体积最小、解压最快；另附固件 hook（zz-firmware）
+            - ➦ 🎨 开机画面：Plymouth（主题 spinner，GRUB 菜单停留 2 秒）
 
             ---
 

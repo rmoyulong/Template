@@ -25,6 +25,10 @@ env:
   # 默认用「模块化」内核（带真实 .ko）。若要用「全内建」内核，
   # 把下面两个 URL 末尾的 -%E6%A8%A1%E5%9D%97%E5%8C%96（-模块化）去掉即可。
   MODULES_URL: https://github.com/rmoyulong/Template/releases/download/kernel-modules-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8-%E6%A8%A1%E5%9D%97%E5%8C%96/modules.tar.gz
+  # 真实内核配置（由 build-kernel 产出，随 kernel-image release 一起发布）。
+  # 放进 /boot/config-$KVER 后，initramfs 的 MODULES=dep 才能正确判断
+  # "哪些驱动已经内建、根设备根本不需要模块"，从而把 initramfs 做到最小。
+  CONFIG_URL: https://github.com/rmoyulong/Template/releases/download/kernel-image-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8-%E6%A8%A1%E5%9D%97%E5%8C%96/config-rt-mod.txt
   BZIMAGE_URL: https://github.com/rmoyulong/Template/releases/download/kernel-image-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8-%E6%A8%A1%E5%9D%97%E5%8C%96/bzImage
 
 jobs:
@@ -57,6 +61,8 @@ jobs:
           wget -q -O rootfs.tar.gz "$ROOTFS_URL"
           wget -q -O modules.tar.gz "$MODULES_URL"
           wget -q -O bzImage "$BZIMAGE_URL"
+          # 真实内核配置：MODULES=dep 要靠它判断哪些驱动已内建；拿不到则回退 most
+          wget -q -O config-rt-mod.txt "$CONFIG_URL" || echo "WARN: config 下载失败，将回退 MODULES=most"
           ls -lh
 
       - name: Create disk image and partitions
@@ -122,7 +128,7 @@ jobs:
           cat "/mnt/rootfs/etc/samba/smb.conf"
             
           #wsdd2配置
-          sudo mkdir -p "mnt/rootfs/usr/lib/systemd/system"
+          #sudo mkdir -p "mnt/rootfs/usr/lib/systemd/system"
           sudo cp ${{ github.workspace }}/patch/wsdd2.service mnt/rootfs/usr/lib/systemd/system/wsdd2.service
           cat "/mnt/rootfs/usr/lib/systemd/system/wsdd2.service"           
             
@@ -142,7 +148,7 @@ jobs:
           sudo cp ${{ github.workspace }}/patch/.bashrc /mnt/rootfs/root/.bashrc
           sudo chmod 0644 /mnt/rootfs/root/.bashrc
           ###################
-                    
+          
           for pair in \
             "${{ github.workspace }}/patch/install-gpt.sh:/mnt/rootfs/root/install.sh" \
             "${{ github.workspace }}/patch/install-gpt-plus.sh:/mnt/rootfs/root/install-plus.sh"; do
@@ -236,20 +242,38 @@ jobs:
             exit 1
           fi
 
-          # 伪造内核 config
-          sudo tee "/mnt/rootfs/boot/config-$KVER" > /dev/null <<'EOF'
-          CONFIG_RD_GZIP=y
-          EOF
+          # ---------- initramfs 策略（决定开机快慢的关键）----------
+          # 之前这里只写了一个仅含 CONFIG_RD_GZIP=y 的"假 config"。initramfs-tools
+          # 的 MODULES=dep 需要真实 /boot/config-$KVER 才知道哪些驱动已经内建，
+          # 假 config 判断不准，所以当时只能退而用 most —— 把 /lib/modules 下
+          # 所有模块全塞进 initramfs。J1900 这类机器开机最早期要整体解压它，
+          # 这正是"同一台机器启动很慢"的主因。现在改用 build-kernel 的真实配置。
+          if [ -f "$WORK_DIR/config-rt-mod.txt" ]; then
+            sudo cp "$WORK_DIR/config-rt-mod.txt" "/mnt/rootfs/boot/config-$KVER"
+            MODULES_MODE=dep
+            echo "已放入真实内核配置 → 采用 MODULES=dep（initramfs 最小化）"
+          else
+            sudo tee "/mnt/rootfs/boot/config-$KVER" > /dev/null <<'CFGEOF'
+          CONFIG_RD_ZSTD=y
+          CFGEOF
+            MODULES_MODE=most
+            echo "WARN: 未取到真实 config，回退 MODULES=most（initramfs 会偏大）"
+          fi
 
-          # 确保压缩方式为 gzip；同时打进 framebuffer 与大部分模块
-          # MODULES=most：无线/声卡等 .ko 与其固件一并进 initramfs
-          # FRAMEBUFFER=y：initramfs 阶段启用帧缓冲控制台（Plymouth 需要）
           sudo mkdir -p /mnt/rootfs/etc/initramfs-tools
-          sudo tee /mnt/rootfs/etc/initramfs-tools/initramfs.conf > /dev/null <<'EOF'
-          MODULES=most
-          COMPRESS=gzip
+          # MODULES=dep：只放入挂载根设备真正需要的模块。本内核已把 SATA、USB
+          #   控制器、USB 存储、键鼠 HID、VT 控制台、ext4 全部内建，所以这里
+          #   几乎什么都不用放 → initramfs 极小、开机极快。无线/声卡等 =m 驱动
+          #   改由 udev 在根分区挂载之后再加载。
+          # COMPRESS=zstd：initramfs 自身也用 zstd（内核默认带 CONFIG_RD_ZSTD=y
+          #   解压支持），解压速度约为 gzip 的 2~3 倍。
+          # FRAMEBUFFER=y：initramfs 阶段启用帧缓冲控制台（Plymouth 需要）。
+          # 想回到"大而全"的旧行为：把 MODULES 改回 most 即可。
+          sudo tee /mnt/rootfs/etc/initramfs-tools/initramfs.conf > /dev/null <<CONFEOF
+          MODULES=${MODULES_MODE}
+          COMPRESS=zstd
           FRAMEBUFFER=y
-          EOF
+          CONFEOF
 
           # depmod 和 initramfs
           sudo chroot /mnt/rootfs /bin/bash -c "depmod -a $KVER"
@@ -312,7 +336,9 @@ jobs:
           sudo mkdir -p /mnt/rootfs/boot/grub
           sudo tee /mnt/rootfs/boot/grub/grub.cfg > /dev/null <<EOF
           set default=0
-          set timeout=5
+          # 开机等待从 5 秒降到 2 秒：这是每次开机固定的纯等待，减 3 秒最直观。
+          # 想保留菜单停留久一点，改回 5 即可。
+          set timeout=2
           insmod all_video
           set gfxmode=auto
           set gfxpayload=keep
