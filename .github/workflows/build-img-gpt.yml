@@ -28,7 +28,7 @@ env:
   # 真实内核配置（由 build-kernel 产出，随 kernel-image release 一起发布）。
   # 放进 /boot/config-$KVER 后，initramfs 的 MODULES=dep 才能正确判断
   # "哪些驱动已经内建、根设备根本不需要模块"，从而把 initramfs 做到最小。
-  CONFIG_URL: https://github.com/rmoyulong/Template/releases/download/kernel-image-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8-%E6%A8%A1%E5%9D%97%E5%8C%96/config-rt-mod.txt
+  CONFIG_URL: https://github.com/rmoyulong/Template/releases/download/kernel-image-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8-%E6%A8%A1%E5%9D%97%E5%8C%96-7/config-rt-mod.txt
   BZIMAGE_URL: https://github.com/rmoyulong/Template/releases/download/kernel-image-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8-%E6%A8%A1%E5%9D%97%E5%8C%96-7/bzImage
 
 jobs:
