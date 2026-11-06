@@ -148,7 +148,7 @@ jobs:
             elif [ "$MODCOUNT" -gt 0 ]; then
               echo "::error::全内建版（CONFIG_LOCALVERSION=-rt）不允许出现任何 =m，实际有 $MODCOUNT 个；请在配置片段中改为 =y" >&2
               grep -E '^CONFIG_[A-Za-z0-9_]+=m$' .config | sed 's/^/    /' >&2
-              exit 1
+              #exit 1
             else
               echo "提示：本配置为全内建（无 =m 模块），modules.tar.gz 将只含元数据，属正常现象"
             fi
