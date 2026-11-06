@@ -185,11 +185,11 @@ jobs:
           wget -O /tmp/lms.deb https://github.com/rmoyulong/Template/releases/download/daphilV/lms.deb
 
           # rootfs 是新建的，目录本不存在；rm -rf 仅为幂等清理，可保留也可删
-          rm -rf /var/lib/squeezeboxserver /var/log/squeezeboxserver
+          #rm -rf /var/lib/squeezeboxserver /var/log/squeezeboxserver
 
-          mkdir -p /var/lib/squeezeboxserver/prefs
-          mkdir -p /var/lib/squeezeboxserver/cache
-          mkdir -p /var/log/squeezeboxserver
+          #mkdir -p /var/lib/squeezeboxserver/prefs
+          #mkdir -p /var/lib/squeezeboxserver/cache
+          #mkdir -p /var/log/squeezeboxserver
 
           # 先安装 deb（创建 squeezeboxserver 用户），失败也继续，靠 fix-broken 补依赖
           dpkg -i /tmp/lms.deb || true

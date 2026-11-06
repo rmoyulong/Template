@@ -41,3 +41,5 @@ pcm.card {
 	device 0
 	subdevice 0
 }
+defaults.pcm.dmixer.period_time 1000
+defaults.pcm.dmixer.buffer_time 4000
