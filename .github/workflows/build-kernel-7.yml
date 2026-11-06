@@ -84,12 +84,19 @@ jobs:
           
           #==========================================================
           # 先确保基础 HID 和 LED 相关依赖存在（具体依赖名以你用的 7.x 源码为准）
-          # 1. 基础 HID 设为内建
+          # 基础 HID 设为内建
           ./scripts/config --enable USB_HID
+          
+          # 先确保基础 HID 和 LED 相关依赖存在（具体依赖名以你用的 7.x 源码为准）
+          ./scripts/config --module USB_HID
+          ./scripts/config --module LEDS_CLASS
+          ./scripts/config --module LEDS_CLASS_MULTICOLOR   # 如果 Kconfig 里有这个依赖
 
-          # 2. 罗技驱动保持模块（或按你脚本要求）
+          # 再开启罗技驱动
           ./scripts/config --module HID_LOGITECH
           ./scripts/config --module HID_LOGITECH_DJ
+
+          # 让内核重新计算依赖，缺失的依赖会被自动补上（如果可补          
           #===========================================================
                     
 
