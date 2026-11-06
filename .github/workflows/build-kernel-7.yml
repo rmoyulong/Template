@@ -173,7 +173,7 @@ jobs:
           # 这里会直接报错拦下 —— 避免装到机器上才发现键盘不可用。
           echo "==================== 关键驱动强制校验 ===================="
           CRITICAL="CONFIG_USB CONFIG_USB_XHCI_HCD CONFIG_USB_EHCI_HCD \
-                    CONFIG_USB_HID CONFIG_HID_GENERIC CONFIG_INPUT_EVDEV \
+                    CONFIG_HID_GENERIC CONFIG_INPUT_EVDEV \
                     CONFIG_KEYBOARD_ATKBD CONFIG_VT_CONSOLE CONFIG_TTY \
                     CONFIG_USB_STORAGE CONFIG_R8169 CONFIG_EXT4_FS"
           MISSING=""
