@@ -81,6 +81,18 @@ jobs:
           scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
           scripts/config --disable MODULE_SIG_ALL
           scripts/config --disable MODULE_SIG_FORCE
+          
+          #==========================================================
+          # 先确保基础 HID 和 LED 相关依赖存在（具体依赖名以你用的 7.x 源码为准）
+          ./scripts/config --module USB_HID
+          ./scripts/config --module LEDS_CLASS
+          ./scripts/config --module LEDS_CLASS_MULTICOLOR   # 如果 Kconfig 里有这个依赖
+
+          # 再开启罗技驱动
+          ./scripts/config --module HID_LOGITECH
+          ./scripts/config --module HID_LOGITECH_DJ 
+          #===========================================================
+                    
 
           # 4) 最后一次依赖补齐，并让 kconfig 报告写错的符号名
           KCONFIG_WARN_UNKNOWN_SYMBOLS=1 make olddefconfig
