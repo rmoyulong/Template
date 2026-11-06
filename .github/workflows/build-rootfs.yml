@@ -287,10 +287,10 @@ jobs:
           # 省电模式开启会导致"刚开始播放的一小段没声或爆音"，这里关掉。
           # 注意：power_save_node 在新内核中已被删除，写了会被静默忽略并打印
           #      "unknown parameter 'power_save_node' ignored"，所以只写 power_save=0。
-          #sudo mkdir -p "$ROOTFS_DIR/etc/modprobe.d"
-          #sudo tee "$ROOTFS_DIR/etc/modprobe.d/audio-disable-powersave.conf" > /dev/null <<'EOF'
-          #options snd_hda_intel power_save=0
-          #EOF
+          sudo mkdir -p "$ROOTFS_DIR/etc/modprobe.d"
+          sudo tee "$ROOTFS_DIR/etc/modprobe.d/audio-disable-powersave.conf" > /dev/null <<'EOF'
+          options snd_hda_intel power_save=0
+          EOF
 
           # ---------- 2) squeezelite 的 ALSA 输出 ----------
           # ★ 必须用 plughw，不能用 hw：
@@ -329,8 +329,8 @@ jobs:
 
           echo "----- /etc/default/squeezelite -----"
           sudo cat "$ROOTFS_DIR/etc/default/squeezelite"
-          #echo "----- /etc/modprobe.d/audio-disable-powersave.conf -----"
-          #sudo cat "$ROOTFS_DIR/etc/modprobe.d/audio-disable-powersave.conf"
+          echo "----- /etc/modprobe.d/audio-disable-powersave.conf -----"
+          sudo cat "$ROOTFS_DIR/etc/modprobe.d/audio-disable-powersave.conf"
 
       - name: Package rootfs
         run: |
