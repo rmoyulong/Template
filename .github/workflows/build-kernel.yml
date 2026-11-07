@@ -2,9 +2,14 @@ name: 构建 Linux 内核 - x86_64
 
 on:
   workflow_dispatch: # 允许在 Actions 页面手动触发
+    inputs:
+      allow_degraded:
+        description: '容错模式：配置降级（=m 非 0 / 品牌 HID 缺失）时只告警不失败'
+        type: boolean
+        default: false
 
 env:
-  KERNEL_VERSION: 6.12.115
+  KERNEL_VERSION: 7.3.3
 
 jobs:
   build_kernel:
@@ -45,9 +50,21 @@ jobs:
 
       - name: 下载内核源码
         run: |
-          wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{ env.KERNEL_VERSION }}.tar.xz
-          tar -xJf linux-${{ env.KERNEL_VERSION }}.tar.xz
-          ls -d linux-${{ env.KERNEL_VERSION }}
+          set -euo pipefail
+          # 主版本号自动推导，绝不能把 v6.x / v7.x 写死：
+          # 7.x 内核位于 v7.x/ 目录下，写死 v6.x 会直接 404
+          # （这正是"7.4 下载不下来"的根因）。
+          MAJOR="${KERNEL_VERSION%%.*}"
+          BASE="https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x"
+          # 候选版（-rc）放在 testing/ 子目录，正式版在上一层
+          case "$KERNEL_VERSION" in
+            *-rc*) BASE="$BASE/testing" ;;
+          esac
+          URL="$BASE/linux-${KERNEL_VERSION}.tar.xz"
+          echo "下载地址: $URL"
+          wget -q "$URL"
+          tar -xJf "linux-${KERNEL_VERSION}.tar.xz"
+          ls -d "linux-${KERNEL_VERSION}"
 
       - name: 配置内核
         working-directory: linux-${{ env.KERNEL_VERSION }}
@@ -106,6 +123,11 @@ jobs:
             grep -E '^CONFIG_[A-Za-z0-9_]+=m$' .config | sed 's/^/    /' | head -40
           fi
 
+          # 容错开关：默认 false（严格）。置 true 时，仅把"配置降级"类问题降为
+          # 告警，方便在内核大版本升级、依赖链变动时先跑通再逐项修。
+          # 注意：关键驱动（CRITICAL）永远硬失败，不受此开关影响。
+          ALLOW_DEGRADED="${{ github.event.inputs.allow_degraded }}"
+
           if [ "${{ matrix.tag }}" = "rt-mod" ]; then
             # 模块化内核：=m 必须达到一定数量，否则说明片段没生效
             if [ "$MODCOUNT" -lt 50 ]; then
@@ -128,9 +150,14 @@ jobs:
               echo "::error::全内建版标签为 rt，但 CONFIG_LOCALVERSION 为 \"$LV\"（期望 \"-rt\"），配置片段可能用错" >&2
               exit 1
             elif [ "$MODCOUNT" -gt 0 ]; then
-              echo "::error::全内建版（CONFIG_LOCALVERSION=-rt）不允许出现任何 =m，实际有 $MODCOUNT 个；请在配置片段中改为 =y" >&2
+              echo "---- 全内建版出现 =m 明细（应在片段中改为 =y，或显式关闭）----" >&2
               grep -E '^CONFIG_[A-Za-z0-9_]+=m$' .config | sed 's/^/    /' >&2
-              exit 1
+              if [ "$ALLOW_DEGRADED" = "true" ]; then
+                echo "::warning::容错模式已开启：全内建版出现 $MODCOUNT 个 =m，本次只告警不失败" >&2
+              else
+                echo "::error::全内建版（CONFIG_LOCALVERSION=-rt）不允许出现任何 =m，实际有 $MODCOUNT 个；请在配置片段中改为 =y（或临时开启容错模式）" >&2
+                exit 1
+              fi
             else
               echo "提示：本配置为全内建（无 =m 模块），modules.tar.gz 将只含元数据，属正常现象"
             fi
@@ -178,14 +205,22 @@ jobs:
           # 内部。若 NEW_LEDS 被误删或置 n，下面这些品牌驱动会被静默忽略（写了
           # 等于没写），肉眼在片段里看不出来，装到机器上才发现罗技无线鼠标滚轮
           # 失灵。这里在构建期就拦下。
+          # 【7.3 起】HID_LOGITECH 又多了一条 `depends on LEDS_CLASS_MULTICOLOR`；
+          # 漏掉它同样会让 HID_LOGITECH / _DJ / _HIDPP 整组被丢弃，因此把
+          # LEDS_CLASS_MULTICOLOR 也纳入断言（两份 config 片段里均已写入）。
           # 策略差异：全内建版为 =y，模块化版为 =m，故品牌驱动只要求"不是 n"。
           if grep -qE '^CONFIG_NEW_LEDS=y$' .config; then
             echo "[OK]   CONFIG_NEW_LEDS=y（LEDS_CLASS 可见性前提）"
+          elif [ "$ALLOW_DEGRADED" = "true" ]; then
+            echo "::warning::容错模式：CONFIG_NEW_LEDS 不是 =y，品牌 HID 驱动会被静默忽略" >&2
           else
             echo "::error::CONFIG_NEW_LEDS 不是 =y，HID_LOGITECH 等品牌驱动会被静默忽略" >&2
             exit 1
           fi
-          BRAND_HID="CONFIG_LEDS_CLASS CONFIG_HID_LOGITECH CONFIG_HID_LOGITECH_DJ \
+          # 说明：LEDS_CLASS_MULTICOLOR 是 7.3 给 HID_LOGITECH 新加的依赖，
+          # 已并入下面的 BRAND_HID 断言（否则整组罗技驱动会被静默丢弃）。
+          BRAND_HID="CONFIG_LEDS_CLASS CONFIG_LEDS_CLASS_MULTICOLOR \
+                     CONFIG_HID_LOGITECH CONFIG_HID_LOGITECH_DJ \
                      CONFIG_HID_MICROSOFT CONFIG_HID_A4TECH CONFIG_HID_CHERRY \
                      CONFIG_HID_REDRAGON CONFIG_HID_APPLE"
           BRAND_MISSING=""
@@ -199,8 +234,12 @@ jobs:
             fi
           done
           if [ -n "$BRAND_MISSING" ]; then
-            echo "::error::家用品牌 HID 驱动未启用（y/m 均可），罗技/微软等键鼠可能失灵：$BRAND_MISSING" >&2
-            exit 1
+            if [ "$ALLOW_DEGRADED" = "true" ]; then
+              echo "::warning::容错模式已开启：品牌 HID 驱动未启用（y/m 均可）：$BRAND_MISSING" >&2
+            else
+              echo "::error::家用品牌 HID 驱动未启用（y/m 均可），罗技/微软等键鼠可能失灵：$BRAND_MISSING" >&2
+              exit 1
+            fi
           fi
 
           # ---- 压缩算法断言：必须 zstd ----
@@ -250,7 +289,7 @@ jobs:
           cd "$MODROOT"
 
           # 版本目录不用 "ls -d */ | head -1" 碰运气：
-          # 目录按字母序排列时 "6.12.115-rt-mod" 会排在 "6.12.115-rt" 前面，
+          # 目录按字母序排列时 "7.3.3-rt-mod" 会排在 "7.3.3-rt" 前面，
           # 一旦同名残留多个版本就会静默取错。这里逐个校验格式，只认唯一命中。
           KVER_DIR=""
           for d in */; do

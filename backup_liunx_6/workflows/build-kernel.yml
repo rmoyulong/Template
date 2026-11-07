@@ -1,10 +1,10 @@
-name: 构建 Linux 内核 - x86_64-7.3.x
+name: 构建 Linux 内核 - x86_64
 
 on:
   workflow_dispatch: # 允许在 Actions 页面手动触发
 
 env:
-  KERNEL_VERSION: 7.3.3
+  KERNEL_VERSION: 6.12.115
 
 jobs:
   build_kernel:
@@ -45,7 +45,7 @@ jobs:
 
       - name: 下载内核源码
         run: |
-          wget -q https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${{ env.KERNEL_VERSION }}.tar.xz
+          wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{ env.KERNEL_VERSION }}.tar.xz
           tar -xJf linux-${{ env.KERNEL_VERSION }}.tar.xz
           ls -d linux-${{ env.KERNEL_VERSION }}
 
@@ -81,24 +81,6 @@ jobs:
           scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
           scripts/config --disable MODULE_SIG_ALL
           scripts/config --disable MODULE_SIG_FORCE
-          
-          #==========================================================
-          # 先确保基础 HID 和 LED 相关依赖存在（具体依赖名以你用的 7.x 源码为准）
-          # 基础 HID 设为内建
-          ./scripts/config --enable USB_HID
-          
-          # 先确保基础 HID 和 LED 相关依赖存在（具体依赖名以你用的 7.x 源码为准）
-          ./scripts/config --module USB_HID
-          ./scripts/config --module LEDS_CLASS
-          ./scripts/config --module LEDS_CLASS_MULTICOLOR   # 如果 Kconfig 里有这个依赖
-
-          # 再开启罗技驱动
-          ./scripts/config --module HID_LOGITECH
-          ./scripts/config --module HID_LOGITECH_DJ
-
-          # 让内核重新计算依赖，缺失的依赖会被自动补上（如果可补          
-          #===========================================================
-                    
 
           # 4) 最后一次依赖补齐，并让 kconfig 报告写错的符号名
           KCONFIG_WARN_UNKNOWN_SYMBOLS=1 make olddefconfig
@@ -148,7 +130,7 @@ jobs:
             elif [ "$MODCOUNT" -gt 0 ]; then
               echo "::error::全内建版（CONFIG_LOCALVERSION=-rt）不允许出现任何 =m，实际有 $MODCOUNT 个；请在配置片段中改为 =y" >&2
               grep -E '^CONFIG_[A-Za-z0-9_]+=m$' .config | sed 's/^/    /' >&2
-              #exit 1
+              exit 1
             else
               echo "提示：本配置为全内建（无 =m 模块），modules.tar.gz 将只含元数据，属正常现象"
             fi
@@ -187,7 +169,7 @@ jobs:
           done
           if [ -n "$MISSING" ]; then
             echo "::error::关键驱动未内建（=y），会导致启动/键盘/网络异常：$MISSING" >&2
-            #exit 1
+            exit 1
           fi
           echo "========================================================="
 
@@ -320,7 +302,7 @@ jobs:
           # 资源上传失败时让构建直接报错，避免"没传上去却显示成功"
           artifactErrorsFailBuild: true
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag: kernel-image-${{ matrix.config_type }}-7
+          tag: kernel-image-${{ matrix.config_type }}
           body: |
             ====================🧊固件信息🧊=======================
             ➦ 💻 固件平台：x86-64-linux
@@ -339,7 +321,7 @@ jobs:
           # 资源上传失败时让构建直接报错，避免"没传上去却显示成功"
           artifactErrorsFailBuild: true
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag: kernel-modules-${{ matrix.config_type }}-7
+          tag: kernel-modules-${{ matrix.config_type }}
           body: |
             ====================🧊固件信息🧊=======================
             ➦ 💻 固件平台：x86-64-linux

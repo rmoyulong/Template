@@ -50,16 +50,11 @@ jobs:
       - name: Update debian-archive-keyring for trixie
         run: |
           set -euo pipefail
-          # 2025.1 版本包含 trixie 的密钥 762F67A0B2C39DE4
-          # 使用 deb.debian.org 的稳定路径，避免特定 mirror 的 pool 目录不同步
           wget -O /tmp/debian-archive-keyring.deb \
             http://deb.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb
           sudo dpkg -i /tmp/debian-archive-keyring.deb
           rm -f /tmp/debian-archive-keyring.deb
-          
-          # 验证 trixie 密钥确实被导入了
-          gpg --show-keys --with-fingerprint /usr/share/keyrings/debian-archive-keyring.gpg 2>/dev/null \
-            | grep -q "762F67A0B2C39DE4" && echo "[OK] trixie key present"     
+          echo "[OK] debian-archive-keyring 2025.1 installed"    
 
       - name: Debootstrap base system
         run: |

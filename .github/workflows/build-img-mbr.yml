@@ -10,8 +10,8 @@ permissions:
   contents: write
 
 env:
-  # 仅作兜底展示；真实版本号由 modules.tar.gz 内的目录名自动识别（如 6.12.115-rt）
-  KERNEL_VERSION: '6.12.115'
+  # 仅作兜底展示；真实版本号由 modules.tar.gz 内的目录名自动识别（如 7.3.3-rt）
+  KERNEL_VERSION: '7.3.3'
   # 从 4096 提升到 6144，给 rootfs + 运行期 apt 留足空间，避免写满产生半截缓存
   IMG_SIZE_MB: 6144
   WORK_DIR: ${{ github.workspace }}/work
@@ -101,26 +101,6 @@ jobs:
           # 清掉 rootfs 中可能残留的损坏 apt 缓存（避免烧录后 apt 解析报错）
           sudo rm -rf /mnt/rootfs/var/lib/apt/lists/* || true
 
-          ###################################################
-          #/mnt子目录
-          sudo mkdir -p /mnt/rootfs/mnt/aliyundrive /mnt/rootfs/mnt/boot /mnt/rootfs/mnt/rootfs /mnt/rootfs/mnt/music
-          sudo mkdir -p /mnt/rootfs/mnt/sd /mnt/rootfs/mnt/usb /mnt/rootfs/mnt/NAS
-
-          #samba配置
-          #sudo mkdir -p "/mnt/rootfs/etc/samba"
-          sudo cp ${{ github.workspace }}/patch/smb.conf /mnt/rootfs/etc/samba/smb.conf
-          cat "/mnt/rootfs/etc/samba/smb.conf"
-          ###################################################          
-          
-          #####添加当前系统rootfs自动扩容脚本
-          sudo cp ${{ github.workspace }}/patch/resize_rootfs.sh /mnt/rootfs/root/resize_rootfs.sh
-          sudo chmod 755 /mnt/rootfs/root/resize_rootfs.sh
-          ###################
-          ########让 ls 有颜色
-          sudo cp ${{ github.workspace }}/patch/.bashrc /mnt/rootfs/root/.bashrc
-          sudo chmod 0644 /mnt/rootfs/root/.bashrc
-          ###################
-          
           # 放入安装脚本（MBR 版，两份）
           #   /root/install.sh      ← patch/install-mbr.sh       （rsync 当前系统整机到目标盘）
           #   /root/install-plus.sh ← patch/install-mbr-plus.sh  （解压 /root/rootfs.tar.gz）
@@ -146,7 +126,7 @@ jobs:
           mkdir -p /tmp/modules-extract
           sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /tmp/modules-extract
 
-          # 版本号不写死：直接读包内顶层目录名（如 6.12.115-rt）
+          # 版本号不写死：直接读包内顶层目录名（如 7.3.3-rt）
           #   若给模块化版单独设了 LOCALVERSION（如 -rt-mod），这里会自动识别
           KVER=""
           for d in /tmp/modules-extract/*/; do
@@ -158,7 +138,7 @@ jobs:
             [0-9]*.[0-9]*) ;;
             *)
               echo "ERROR: 无法从 modules.tar.gz 识别版本目录（读到: '${KVER}'）"
-              echo "       包内顶层应为 6.12.115 / 6.12.115-rt 这类目录"
+              echo "       包内顶层应为 7.3.3 / 7.3.3-rt 这类目录"
               ls -la /tmp/modules-extract
               exit 1
               ;;
