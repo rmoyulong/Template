@@ -176,13 +176,11 @@ jobs:
           cd /
 
           apt-get update
-          #apt-get install -y git ca-certificates libcrypt-openssl-rsa-perl
+          
+          apt-get install -y sudo samba samba-common-bin smbclient wsdd2 locales
           
           #添加中文
           locale-gen zh_CN.UTF-8
-
-          #安装 samba 和 wsdd2
-          apt-get install -y sudo samba samba-common-bin smbclient wsdd2
 
           #git clone --depth=1 https://github.com/rmoyulong/packages_lang_golang/ /golang
           wget -O /tmp/lms.deb https://github.com/rmoyulong/Template/releases/download/daphilV/lms.deb
