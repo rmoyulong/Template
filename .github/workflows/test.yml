@@ -61,24 +61,7 @@ jobs:
           KCONFIG
           cp -v .config "${{ github.workspace }}/config-${{ matrix.tag }}.txt"
 
-      - name: 上传最新config
-        uses: ncipollo/release-action@v1
-        with:
-          allowUpdates: true
-          # 资源上传失败时让构建直接报错，避免"没传上去却显示成功"
-          artifactErrorsFailBuild: true
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag: test
-          body: |
-            ====================🧊固件信息🧊=======================
-            ➦ 💻 固件平台：x86-64-linux
-            ➦ ⚽ 固件源码：https://cdn.kernel.org/
-            ➦ 🚀 内核版本：${{ env.KERNEL_VERSION }}
-            ➦ 📦 模块策略：${{ matrix.mode }}
-          artifacts: |
-            ${{ github.workspace }}/config-${{ matrix.tag }}.txt
-
-      - name: 上传内核模块
+      - name: 上传新的config
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
