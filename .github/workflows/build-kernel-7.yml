@@ -15,7 +15,7 @@ jobs:
       matrix:
         include:
           # ---- RT 全内建：所有驱动编进 bzImage，部署只需一个文件 ----
-          - config_type: RT实时内核
+          #- config_type: RT实时内核
             tag: rt
             fragment: patch/j1900andj1800-RT.config
             mode: 全内建（所有驱动编入 bzImage，modules 包只含元数据）
