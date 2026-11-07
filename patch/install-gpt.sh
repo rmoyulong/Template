@@ -179,7 +179,7 @@ mount --bind /proc /mnt/target/proc
 mount --bind /sys /mnt/target/sys
 
 # 把当前系统的 GRUB 平台模块复制进目标，保证离线时 32 位/64 位 UEFI 也能安装
-# （rootfs 由 debootstrap 生成时通常不含 grub-efi-ia32-bin 对应的模块目录）
+# （目标 rootfs 由 debootstrap 生成，通常不含 grub-efi-ia32-bin）
 mkdir -p /mnt/target/usr/lib/grub
 for t in i386-pc x86_64-efi i386-efi; do
   if [ -d "/usr/lib/grub/$t" ]; then

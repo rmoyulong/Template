@@ -414,7 +414,7 @@ jobs:
             **🧊 固件信息**
 
             - ➦ 💻 固件平台：x86-64-linux
-            - ➦ 🚀 内核版本：6.12.115（配合 kernel-image 发布使用）
+            - ➦ 🚀 内核版本：7.3.3（配合 kernel-image 发布使用）
             - ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.4-cgi / php8.4-fpm / LMS
             - ➦ 🔌 网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
             - ➦ 🧩 initramfs：MODULES=dep + COMPRESS=zstd + FRAMEBUFFER，体积最小、解压最快；固件 hook（zz-firmware）只收 rtl_nic（iwlwifi 已屏蔽，其固件不再入 initramfs）

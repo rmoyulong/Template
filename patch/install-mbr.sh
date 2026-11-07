@@ -93,17 +93,21 @@ parted -s "$TARGET" set 1 boot on
 parted -s "$TARGET" mkpart primary ext4 201MiB 100%
 partprobe "$TARGET"
 
-# 等待分区节点出现
+# 等待分区节点出现（兼容 NVMe: nvme0n1p1 和 sdX: sda1 两种命名）
+if [[ "$TARGET" =~ nvme ]]; then
+  P1="${TARGET}p1"
+  P2="${TARGET}p2"
+else
+  P1="${TARGET}1"
+  P2="${TARGET}2"
+fi
 for i in 1 2 3 4 5; do
   sleep 1
-  [ -b "${TARGET}1" ] && [ -b "${TARGET}2" ] && break
+  [ -b "$P1" ] && [ -b "$P2" ] && break
 done
-[ -b "${TARGET}1" ] && [ -b "${TARGET}2" ] || {
+[ -b "$P1" ] && [ -b "$P2" ] || {
   echo "分区设备节点未出现，请检查磁盘" >&2; exit 1
 }
-
-P1="${TARGET}1"   # EFI/boot 分区（FAT32）
-P2="${TARGET}2"   # 根分区（EXT4）
 
 mkfs.vfat -F32 "$P1"
 mkfs.ext4 -F -L rootfs "$P2"
@@ -118,6 +122,7 @@ mount "$P2" /mnt/target
 #/mnt子目录
 sudo mkdir -p /mnt/target/mnt/aliyundrive /mnt/target/mnt/boot /mnt/target/mnt/rootfs /mnt/target/mnt/music
 sudo mkdir -p /mnt/target/mnt/sd /mnt/target/mnt/usb /mnt/target/mnt/NAS 
+
 
 echo "同步当前系统到目标盘（文件较多，请耐心等待）..."
 # -x：不跨文件系统（EFI 挂载点等自动跳过）
@@ -171,7 +176,7 @@ mount --bind /proc /mnt/target/proc
 mount --bind /sys /mnt/target/sys
 
 # 把当前系统的 GRUB 平台模块复制进目标，保证离线时 32 位/64 位 UEFI 也能安装
-# （rootfs 由 debootstrap 生成时通常不含 grub-efi-ia32-bin 对应的模块目录）
+# （目标 rootfs 由 debootstrap 生成，通常不含 grub-efi-ia32-bin）
 mkdir -p /mnt/target/usr/lib/grub
 for t in i386-pc x86_64-efi i386-efi; do
   if [ -d "/usr/lib/grub/$t" ]; then

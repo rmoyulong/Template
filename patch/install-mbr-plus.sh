@@ -32,7 +32,8 @@ if [ -z "$ROOTFS_TARBALL" ] || [ ! -f "$ROOTFS_TARBALL" ]; then
   exit 1
 fi
 
-# 校验确实是可读的 gzip tar，避免解压到一半才发现文件坏了
+# 校验确实是可读的 gzip tar，避免解压到一半才发现文件坏了（大包会需要几十秒）
+echo "正在校验 rootfs 压缩包完整性..."
 if ! tar -tzf "$ROOTFS_TARBALL" >/dev/null 2>&1; then
   echo "rootfs 压缩包无法读取（不是有效的 tar.gz？）：$ROOTFS_TARBALL" >&2
   exit 1
@@ -57,6 +58,12 @@ if [ ${#MISSING[@]} -gt 0 ]; then
       exit 1
     }
   done
+fi
+
+# 校验源系统内核存在（rootfs 不含内核，必须从当前系统补入）
+if ! ls /boot/vmlinuz-* >/dev/null 2>&1 && [ ! -f /boot/bzImage ]; then
+  echo "当前系统 /boot 下既没有 vmlinuz-* 也没有 bzImage，无法补入内核" >&2
+  exit 1
 fi
 
 # ---------- 1. 识别当前系统所在盘（将被排除，避免误格 U 盘） ----------
@@ -113,17 +120,21 @@ parted -s "$TARGET" set 1 boot on
 parted -s "$TARGET" mkpart primary ext4 201MiB 100%
 partprobe "$TARGET"
 
-# 等待分区节点出现
+# 等待分区节点出现（兼容 NVMe: nvme0n1p1 和 sdX: sda1 两种命名）
+if [[ "$TARGET" =~ nvme ]]; then
+  P1="${TARGET}p1"
+  P2="${TARGET}p2"
+else
+  P1="${TARGET}1"
+  P2="${TARGET}2"
+fi
 for i in 1 2 3 4 5; do
   sleep 1
-  [ -b "${TARGET}1" ] && [ -b "${TARGET}2" ] && break
+  [ -b "$P1" ] && [ -b "$P2" ] && break
 done
-[ -b "${TARGET}1" ] && [ -b "${TARGET}2" ] || {
+[ -b "$P1" ] && [ -b "$P2" ] || {
   echo "分区设备节点未出现，请检查磁盘" >&2; exit 1
 }
-
-P1="${TARGET}1"   # EFI/boot 分区（FAT32）
-P2="${TARGET}2"   # 根分区（EXT4）
 
 mkfs.vfat -F32 "$P1"
 mkfs.ext4 -F -L rootfs "$P2"
@@ -134,6 +145,11 @@ echo "根分区 UUID: $ROOT_UUID"
 # ---------- 5. 先挂根分区并解压 rootfs；EFI 分区必须在解压之后才挂 ----------
 mkdir -p /mnt/target
 mount "$P2" /mnt/target
+
+#/mnt子目录
+sudo mkdir -p /mnt/target/mnt/aliyundrive /mnt/target/mnt/boot /mnt/target/mnt/rootfs /mnt/target/mnt/music
+sudo mkdir -p /mnt/target/mnt/sd /mnt/target/mnt/usb /mnt/target/mnt/NAS 
+
 
 echo "解压 rootfs 到目标盘（文件较大，请耐心等待）..."
 # --xattrs --acls 必须与打包端（build-rootfs.yml: tar --acls --xattrs）对应；
@@ -152,13 +168,15 @@ cp -a /lib/modules/. /mnt/target/lib/modules/
 # 内核 / initrd / config：同样先清掉 tar 里带来的
 mkdir -p /mnt/target/boot
 rm -f /mnt/target/boot/vmlinuz-* /mnt/target/boot/initrd.img-* /mnt/target/boot/config-* 2>/dev/null || true
-if ! ls /boot/vmlinuz-* >/dev/null 2>&1; then
-  echo "当前系统 /boot 下没有 vmlinuz-*，无法补入内核" >&2
-  exit 1
+if ls /boot/vmlinuz-* >/dev/null 2>&1; then
+  cp -a /boot/vmlinuz-* /mnt/target/boot/
+  cp -a /boot/initrd.img-* /mnt/target/boot/ 2>/dev/null || true
+  cp -a /boot/config-* /mnt/target/boot/ 2>/dev/null || true
+else
+  # 仅有 bzImage 时按当前内核版本命名
+  cp -a /boot/bzImage "/mnt/target/boot/vmlinuz-$(uname -r)"
+  cp -a /boot/config-* /mnt/target/boot/ 2>/dev/null || true
 fi
-cp -a /boot/vmlinuz-* /mnt/target/boot/
-cp -a /boot/initrd.img-* /mnt/target/boot/ 2>/dev/null || true
-cp -a /boot/config-* /mnt/target/boot/ 2>/dev/null || true
 
 # 基础目录（/boot/efi 必须等 rootfs 解压出来后再建、再挂）
 mkdir -p /mnt/target/{proc,sys,dev,run,tmp,mnt,media,boot/efi}

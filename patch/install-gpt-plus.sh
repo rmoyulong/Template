@@ -60,6 +60,12 @@ if [ ${#MISSING[@]} -gt 0 ]; then
   done
 fi
 
+# 校验源系统内核存在（rootfs 不含内核，必须从当前系统补入）
+if ! ls /boot/vmlinuz-* >/dev/null 2>&1 && [ ! -f /boot/bzImage ]; then
+  echo "当前系统 /boot 下既没有 vmlinuz-* 也没有 bzImage，无法补入内核" >&2
+  exit 1
+fi
+
 # ---------- 1. 识别当前系统所在盘（将被排除，避免误格 U 盘） ----------
 ROOT_SRC=$(findmnt -n -o SOURCE /)
 if [[ "$ROOT_SRC" =~ ^/dev/ ]]; then
@@ -144,6 +150,11 @@ echo "根分区 UUID: $ROOT_UUID"
 mkdir -p /mnt/target
 mount "$P3" /mnt/target
 
+#/mnt子目录
+sudo mkdir -p /mnt/target/mnt/aliyundrive /mnt/target/mnt/boot /mnt/target/mnt/rootfs /mnt/target/mnt/music
+sudo mkdir -p /mnt/target/mnt/sd /mnt/target/mnt/usb /mnt/target/mnt/NAS 
+
+
 echo "解压 rootfs 到目标盘（文件较大，请耐心等待）..."
 # --xattrs --acls 必须与打包端（build-rootfs.yml: tar --acls --xattrs）对应；
 # 少了它们，文件 capability（如 ping 的 cap_net_raw）与 POSIX ACL 会在解压时静默丢失。
@@ -161,13 +172,15 @@ cp -a /lib/modules/. /mnt/target/lib/modules/
 # 内核 / initrd / config：同样先清掉 tar 里带来的
 mkdir -p /mnt/target/boot
 rm -f /mnt/target/boot/vmlinuz-* /mnt/target/boot/initrd.img-* /mnt/target/boot/config-* 2>/dev/null || true
-if ! ls /boot/vmlinuz-* >/dev/null 2>&1; then
-  echo "当前系统 /boot 下没有 vmlinuz-*，无法补入内核" >&2
-  exit 1
+if ls /boot/vmlinuz-* >/dev/null 2>&1; then
+  cp -a /boot/vmlinuz-* /mnt/target/boot/
+  cp -a /boot/initrd.img-* /mnt/target/boot/ 2>/dev/null || true
+  cp -a /boot/config-* /mnt/target/boot/ 2>/dev/null || true
+else
+  # 仅有 bzImage 时按当前内核版本命名
+  cp -a /boot/bzImage "/mnt/target/boot/vmlinuz-$(uname -r)"
+  cp -a /boot/config-* /mnt/target/boot/ 2>/dev/null || true
 fi
-cp -a /boot/vmlinuz-* /mnt/target/boot/
-cp -a /boot/initrd.img-* /mnt/target/boot/ 2>/dev/null || true
-cp -a /boot/config-* /mnt/target/boot/ 2>/dev/null || true
 
 # 基础目录（/boot/efi 必须等 rootfs 解压出来后再建、再挂）
 mkdir -p /mnt/target/{proc,sys,dev,run,tmp,mnt,media,boot/efi}
