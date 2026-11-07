@@ -118,11 +118,14 @@ jobs:
           EOF
           echo "----- 99-lms-network.conf -----"
           cat "$ROOTFS_DIR/etc/sysctl.d/99-lms-network.conf"
-
-          # wsdd2 的服务单元由 wsdd2 包自带（包内路径 /lib/systemd/system/wsdd2.service，
-          # 二进制 /usr/sbin/wsdd2），因此这里不再手动从 patch/ 拷贝。
-          # 原先的拷贝其实也是无效动作：该步骤在 chroot 安装 wsdd2 之前执行，
-          # dpkg 解包时会用包内同名文件覆盖掉它。已移除。
+          
+          sudo mkdir -p "$ROOTFS_DIR/etc/update-motd.d"
+          sudo cp ${{ github.workspace }}/patch/cats_banner "$ROOTFS_DIR/etc/cats_banner"
+          sudo tee "$ROOTFS_DIR/etc/update-motd.d/40-cats_banner" > /dev/null <<'EOF'
+          #!/bin/bash
+          set -o pipefail
+          cat /etc/cats_banner
+          EOF
 
       - name: Configure netplan (DHCP dynamic IP)
         run: |

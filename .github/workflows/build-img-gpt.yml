@@ -124,7 +124,7 @@ jobs:
           sudo cp ${{ github.workspace }}/patch/locale.gen /mnt/rootfs/etc/locale.gen
           cat "/mnt/rootfs/etc/default/locale.conf"
           cat "/mnt/rootfs/etc/locale.gen"
-          ###################################################          
+          ################################################### 
           
           #####添加当前系统rootfs自动扩容脚本
           sudo cp ${{ github.workspace }}/patch/resize_rootfs.sh /mnt/rootfs/root/resize_rootfs.sh

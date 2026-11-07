@@ -115,6 +115,14 @@ jobs:
           EOF
           echo "----- 99-lms-network.conf -----"
           cat "$ROOTFS_DIR/etc/sysctl.d/99-lms-network.conf"
+          
+          sudo mkdir -p "$ROOTFS_DIR/etc/update-motd.d"
+          sudo cp ${{ github.workspace }}/patch/cats_banner "$ROOTFS_DIR/etc/cats_banner"
+          sudo tee "$ROOTFS_DIR/etc/update-motd.d/40-cats_banner" > /dev/null <<'EOF'
+          #!/bin/bash
+          set -o pipefail
+          cat /etc/cats_banner
+          EOF
 
       - name: Configure netplan (DHCP dynamic IP)
         run: |
