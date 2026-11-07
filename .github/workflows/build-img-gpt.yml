@@ -404,7 +404,7 @@ jobs:
             可启动 Debian IMG（支持 32 位 / 64 位 UEFI + BIOS 启动）
             分区表为 GPT
             内核：${{ env.KVER }}
-            rootfs：Debian bookworm + SSH/FTP/Nginx/PHP8
+            rootfs：Debian trixie + SSH/FTP/Nginx/PHP8/LMS
             初始 root 密码：1234（首次 SSH 登录强制改密）
 
             ## 写入 U 盘或硬盘

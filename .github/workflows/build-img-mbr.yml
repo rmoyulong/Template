@@ -373,7 +373,8 @@ jobs:
             Debian IMG（MBR 兼容版）
             分区表为 MBR，支持老 BIOS / 32 位 UEFI / 64 位 UEFI
             内核：${{ env.KVER }}
-            初始 root 密码：1234
+            rootfs：Debian trixie + SSH/FTP/Nginx/PHP8/LMS
+            初始 root 密码：1234（首次 SSH 登录强制改密
 
             ## 写入 U 盘或硬盘
 
