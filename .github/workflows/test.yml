@@ -59,6 +59,7 @@ jobs:
           make listnewconfig        # 看 7.4 新增了哪些符号
           make olddefconfig         # 生成
           scripts/diffconfig .config.old .config    # 看改动明细
+          KCONFIG
           cp -v .config "${{ github.workspace }}/config-${{ matrix.tag }}.txt"
 
       - name: 上传最新config
