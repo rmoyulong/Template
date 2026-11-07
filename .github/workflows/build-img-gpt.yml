@@ -117,6 +117,13 @@ jobs:
           #sudo mkdir -p "/mnt/rootfs/etc/samba"
           sudo cp ${{ github.workspace }}/patch/smb.conf /mnt/rootfs/etc/samba/smb.conf
           cat "/mnt/rootfs/etc/samba/smb.conf"
+          
+          #中文环境配置
+          #sudo mkdir -p "/mnt/rootfs/etc/default"
+          sudo cp ${{ github.workspace }}/patch/locale.conf /mnt/rootfs/etc/default/locale.conf
+          sudo cp ${{ github.workspace }}/patch/locale.gen /mnt/rootfs/etc/locale.gen
+          cat "/mnt/rootfs/etc/default/locale.conf"
+          cat "/mnt/rootfs/etc/locale.gen"
           ###################################################          
           
           #####添加当前系统rootfs自动扩容脚本

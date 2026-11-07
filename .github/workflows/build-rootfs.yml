@@ -177,6 +177,9 @@ jobs:
 
           apt-get update
           #apt-get install -y git ca-certificates libcrypt-openssl-rsa-perl
+          
+          #添加中文
+          locale-gen zh_CN.UTF-8
 
           #安装 samba 和 wsdd2
           apt-get install -y sudo samba samba-common-bin smbclient wsdd2
