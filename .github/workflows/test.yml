@@ -45,8 +45,7 @@ jobs:
 
       - name: 下载内核源码
         run: |
-          #wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${{ env.KERNEL_VERSION }}.tar.xz
-          wget -q https://git.kernel.org/torvalds/t/linux-${{ env.KERNEL_VERSION }}.tar.xz
+          wget -q https://git.kernel.org/torvalds/t/linux-${{ env.KERNEL_VERSION }}.tar.gz
           tar -xJf linux-${{ env.KERNEL_VERSION }}.tar.xz
           ls -d linux-${{ env.KERNEL_VERSION }}
 
