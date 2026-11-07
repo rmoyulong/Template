@@ -67,7 +67,7 @@ jobs:
             --arch=amd64 \
             --variant=minbase \
             --components=main,non-free-firmware \
-            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.4-cgi,php8.4-fpm,php8.4-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-linux-free,plymouth,plymouth-themes,ffmpeg,squeezelite,sudo,alsa-utils,alsa-tools,ethtool,cloud-guest-utils,wireless-regdb \
+            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.4-cgi,php8.4-fpm,php8.4-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-iwlwifi,firmware-linux-free,plymouth,plymouth-themes,ffmpeg,squeezelite,sudo,alsa-utils,alsa-tools,ethtool,cloud-guest-utils,wireless-regdb \
             "$DEBIAN_SUITE" "$ROOTFS_DIR" \
             "$MIRROR/"
 
@@ -190,16 +190,70 @@ jobs:
           sudo sed -i 's/^;*cgi.fix_pathinfo.*/cgi.fix_pathinfo=1/' \
             "$ROOTFS_DIR/etc/php/8.4/cgi/php.ini" || true
 
+          # ---------- Plymouth 开机画面（主题 spinner）----------
+          # 这里只写配置、不执行 plymouth-set-default-theme -R：
+          #   rootfs 阶段还没有目标内核，-R 会调用 update-initramfs 而失败。
+          #   真正的 initramfs 在 build-img-*.yml 里用目标内核重建，
+          #   届时 initramfs-tools 的 plymouth hook 会自动把主题打进去。
           sudo mkdir -p "$ROOTFS_DIR/etc/plymouth"
           sudo tee "$ROOTFS_DIR/etc/plymouth/plymouthd.conf" > /dev/null <<'EOF'
           [Daemon]
           Theme=spinner
           ShowDelay=0
           EOF
+          # 同步刷新 plymouth 的默认主题链接（不带 -R，安全）
           sudo chroot "$ROOTFS_DIR" plymouth-set-default-theme spinner || true
           echo "----- Plymouth 主题配置 -----"
           sudo cat "$ROOTFS_DIR/etc/plymouth/plymouthd.conf"
 
+          # ---------- initramfs 固件 hook ----------
+          # 【为什么需要】有线网卡 RTL8111（r8169）的固件需在早期可用，显式打进
+          #   initramfs 以保证早期链路建立。
+          #   注：iwlwifi 已在下方 /etc/modprobe.d/iwlwifi.conf 中被 blacklist，
+          #   其固件不再收入 initramfs（驱动不加载，收了只是无谓增大体积）。
+          sudo mkdir -p "$ROOTFS_DIR/etc/initramfs-tools/hooks"
+          sudo tee "$ROOTFS_DIR/etc/initramfs-tools/hooks/zz-firmware" > /dev/null <<'HOOK'
+          #!/bin/sh
+          set -e
+          PREREQ=""
+          prereqs() { echo "$PREREQ"; }
+          case "$1" in
+            prereqs) prereqs; exit 0 ;;
+          esac
+          if [ -r /usr/share/initramfs-tools/hook-functions ]; then
+            . /usr/share/initramfs-tools/hook-functions
+          fi
+          [ -n "${DESTDIR:-}" ] || { echo "zz-firmware: DESTDIR 未设置，跳过"; exit 0; }
+          mkdir -p "${DESTDIR}/lib/firmware"
+          # 只收 rtl_nic（板载 RTL8111 走 r8169，需要的正是它的固件）。
+          # 不再整份拷贝 rtlwifi（约 15MB，只有 Realtek 无线网卡才用得到，
+          # 而本机用的是 Intel 6205），initramfs 因此明显变小。
+          for d in rtl_nic; do
+            if [ -d "/lib/firmware/$d" ]; then
+              mkdir -p "${DESTDIR}/lib/firmware/$d"
+              cp -a "/lib/firmware/$d/." "${DESTDIR}/lib/firmware/$d/" 2>/dev/null || true
+            fi
+          done
+          # iwlwifi 固件不再收入 initramfs：
+          #   Intel Centrino Advanced-N 6205 已由 /etc/modprobe.d/iwlwifi.conf
+          #   屏蔽（blacklist iwlwifi），驱动不会加载，固件放入 initramfs 纯属
+          #   无谓增大体积，故移除。
+          #   ⚠ 若将来要重新启用无线（删掉 blacklist，并把内核配置里的
+          #     CONFIG_IWLWIFI 恢复为 =m/=y 后重编译），把下面这段加回，让早期的
+          #     固件请求能从 initramfs 得到满足：
+          #   for f in /lib/firmware/iwlwifi-6000g2a-*.ucode; do
+          #     [ -e "$f" ] || continue
+          #     cp -a "$f" "${DESTDIR}/lib/firmware/" 2>/dev/null || true
+          #   done
+          exit 0
+          HOOK
+          sudo chmod 755 "$ROOTFS_DIR/etc/initramfs-tools/hooks/zz-firmware"
+          echo "----- initramfs 固件 hook -----"
+          sudo ls -l "$ROOTFS_DIR/etc/initramfs-tools/hooks/"
+
+          # ---------- GRUB 默认参数 ----------
+          # 写进 rootfs：以后在目标机上跑 update-grub 时也保持同样的开机外观
+          # （与 build-img-*.yml 里手写的 grub.cfg 保持一致）
           sudo mkdir -p "$ROOTFS_DIR/etc/default"
           sudo tee "$ROOTFS_DIR/etc/default/grub" > /dev/null <<'EOF'
           GRUB_DEFAULT=0
@@ -231,30 +285,92 @@ jobs:
         run: |
           set -euo pipefail
 
+          # ---------- 1) 关闭 HDA 省电 ----------
+          # 省电模式开启会导致"刚开始播放的一小段没声或爆音"，这里关掉。
+          # 注意：power_save_node 在新内核中已被删除，写了会被静默忽略并打印
+          #      "unknown parameter 'power_save_node' ignored"，所以只写 power_save=0。
           sudo mkdir -p "$ROOTFS_DIR/etc/modprobe.d"
           sudo tee "$ROOTFS_DIR/etc/modprobe.d/audio-disable-powersave.conf" > /dev/null <<'EOF'
           options snd_hda_intel power_save=0
           EOF
 
+          # ---------- 2) squeezelite 的 ALSA 输出 ----------
+          # ★ 必须用 plughw，不能用 hw：
+          #   hw:0,0 是硬件直通、不做任何转换，采样率必须与硬件原生完全一致；
+          #   ALC662 模拟输出原生锁定 48000Hz，播放 44.1kHz（CD 与多数无损）时会
+          #   打开失败并反复重开设备，表现为"响一下即中断"。
+          #   plughw 经 ALSA 插件层自动转换采样率与格式，任何采样率都能播。
           sudo mkdir -p "$ROOTFS_DIR/etc/default"
           sudo tee "$ROOTFS_DIR/etc/default/squeezelite" > /dev/null <<'EOF'
           # Defaults for squeezelite initscript
           # sourced by /etc/init.d/squeezelite
           # installed at /etc/default/squeezelite by the maintainer scripts
 
+          # The name for the squeezelite player:
           SL_NAME="Squeezelite"
 
+          # ALSA output device
+          # 用 plughw（而非 hw）：hw 是硬件直通、不做转换，采样率必须与硬件原生一致，
+          # ALC662 原生仅 48000Hz，播 44.1kHz 会失败中断；plughw 会自动转换采样率。
+          #SL_SOUNDCARD="plughw:0,0"
           SL_SOUNDCARD="hw:0,0"
 
+          # Squeezebox server (Logitech Media Server):
+          # Uncomment the next line if you want to point squeezelite at the IP address of
+          # your squeezebox server. This is usually unnecessary as the server is
+          # automatically discovered.
           #SB_SERVER_IP="192.168.x.y"
 
-          SB_EXTRA_ARGS="-D dop -p 99 -b 4096:6892"
+          # Additional options to pass to squeezelite:
+          #   -p 99            实时优先级
+          #   -r 44100-48000   声明设备支持的采样率范围，避免尝试硬件不支持的值
+          #   -b 2048:3445     官方默认缓冲（不加大，避免延迟升高）
+          # 注意：不要加 -D（DSD 声明），ALC662 不支持 DSD，声明后播 DSD 会无声或出噪声。
+          # Please do not include -z to make squeezelite daemonise itself.
+          SB_EXTRA_ARGS="-p 99 -r 44100-48000 -b 2048:3445"
           EOF
 
           echo "----- /etc/default/squeezelite -----"
           sudo cat "$ROOTFS_DIR/etc/default/squeezelite"
           echo "----- /etc/modprobe.d/audio-disable-powersave.conf -----"
           sudo cat "$ROOTFS_DIR/etc/modprobe.d/audio-disable-powersave.conf"
+
+          # ---------- Intel 无线网卡（Centrino Advanced-N 6205）屏蔽 ----------
+          # 【背景】该卡（iwlwifi-6000g2a-*）在 J1800/N3540 等 Bay Trail 平台上
+          # 出现间歇性硬件级故障，失败位置在两种形态间漂移：
+          #   A) 读不到 EEPROM：bad EEPROM/OTP signature / EEPROM_GP=0xffffffff
+          #      / Unable to init EEPROM（寄存器读回全 1，设备在总线上不应答）；
+          #   B) 固件加载成功后跑数秒自崩：Hardware error detected / NMI_INTERRUPT_HOST，
+          #      随后 Failed to load firmware chunk（-110）并 dump 满屏寄存器。
+          # 【已逐一排除】关闭 PCIe ASPM（内核参数 pcie_aspm=off + setpci 复核
+          #   LnkCtl: ASPM Disabled）无效；iwlwifi power_save=0 / 11n_disable=1 无效；
+          #   blacklist intel_ips 无效（本机本就不加载该模块）；固件无新版本可用
+          #   （6000g2a-6.ucode 为官方唯一且末版）。判为该卡与平台的硬件/兼容性问题。
+          # 【处置】本机无线非必需（板载 RTL8111 有线正常），直接屏蔽 iwlwifi：
+          #   启动不再空转重试十余秒，dmesg 不再被寄存器 dump 刷屏。
+          # 【生效范围】blacklist 只对以模块方式构建（=m）的 iwlwifi 生效，即
+          #   -rt-mod 模块化版；全内建版（=y）内核里驱动在启动时即注册，blacklist
+          #   对它无效 —— 该版本靠内核配置里 CONFIG_IWLWIFI=n 实现（已同步改）。
+          # 【如何临时启用】blacklist 只挡自动加载，不挡手动：
+          #   sudo modprobe iwlwifi
+          #   若无接口，再做一次 PCI 复位后重扫：
+          #   echo 1 | sudo tee /sys/bus/pci/devices/0000:02:00.0/remove
+          #   sleep 3 && echo 1 | sudo tee /sys/bus/pci/rescan
+          sudo tee "$ROOTFS_DIR/etc/modprobe.d/iwlwifi.conf" > /dev/null <<'EOF'
+          # Intel Centrino Advanced-N 6205 在本平台存在硬件级间歇故障，
+          # 软件手段（ASPM、驱动省电、intel_ips、换固件）均已排除，故直接屏蔽。
+          # blacklist 只挡自动加载（udev），需要时仍可 `modprobe iwlwifi` 手动加载。
+          blacklist iwlwifi
+          EOF
+          echo "----- /etc/modprobe.d/iwlwifi.conf -----"
+          sudo cat "$ROOTFS_DIR/etc/modprobe.d/iwlwifi.conf"
+
+          # ---------- 3) 断言：防止将来被误改回 hw: 直通 ----------
+          #grep -q '^SL_SOUNDCARD="plughw:' "$ROOTFS_DIR/etc/default/squeezelite" || {
+          #  echo " [FAIL] SL_SOUNDCARD 不是 plughw：hw 直通在采样率不匹配时会中断播放"
+          #  exit 1
+          #}
+          #echo " [OK] SL_SOUNDCARD 使用 plughw（自动采样率转换）"
 
       - name: Package rootfs
         run: |
