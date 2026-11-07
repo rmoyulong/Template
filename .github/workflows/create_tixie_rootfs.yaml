@@ -47,6 +47,20 @@ jobs:
       #   Ubuntu 22.04 runner 的 debian-archive-keyring 足够新，
       #   debootstrap 能自动验证 trixie Release 签名。
 
+      - name: Update debian-archive-keyring for trixie
+        run: |
+          set -euo pipefail
+          # 下载包含 trixie 密钥的 debian-archive-keyring 包
+          # 2023.4 或更新版本已加入 trixie 签名密钥 762F67A0B2C39DE4
+          wget -O /tmp/debian-archive-keyring.deb \
+            http://http.us.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2023.4_all.deb
+          sudo dpkg -i /tmp/debian-archive-keyring.deb
+          rm -f /tmp/debian-archive-keyring.deb
+          
+          # 验证 trixie 密钥已存在
+          gpg --show-keys --with-fingerprint /usr/share/keyrings/debian-archive-keyring.gpg 2>/dev/null \
+            | grep -q "762F67A0B2C39DE4" && echo "[OK] trixie key present"      
+
       - name: Debootstrap base system
         run: |
           set -euo pipefail
