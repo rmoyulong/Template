@@ -129,7 +129,8 @@ jobs:
           
           sudo mkdir -p "$ROOTFS_DIR/etc/default"
           sudo cp ${{ github.workspace }}/patch/locale.conf $ROOTFS_DIR/etc/default/locale.conf
-          sudo cp ${{ github.workspace }}/patch/locale.gen $ROOTFS_DIR/etc/etc/locale.gen
+          sudo cp ${{ github.workspace }}/patch/locale.gen $ROOTFS_DIR/etc/locale.gen
+          sudo cp ${{ github.workspace }}/patch/locale.conf $ROOTFS_DIR/etc/locale.conf
 
       - name: Configure netplan (DHCP dynamic IP)
         run: |
