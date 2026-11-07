@@ -54,7 +54,8 @@ jobs:
         working-directory: linux-${{ env.KERNEL_VERSION }}
         run: |
           set -euo pipefail
-		  wget ${{ matrix.fragment }} -O .config
+          
+		  wget "${{ matrix.fragment }}" -O .config
 		  
 		  make listnewconfig
 		  
