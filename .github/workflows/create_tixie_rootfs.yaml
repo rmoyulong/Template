@@ -167,7 +167,6 @@ jobs:
           # 直接 cp 会报 "not writing through dangling symlink"，故先删除再写
           sudo rm -f "$ROOTFS_DIR/etc/resolv.conf"
           sudo cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
-          sudo cp ${{ github.workspace }}/patch/locale.gen "$ROOTFS_DIR/etc/etc/locale.gen"
 
           # 把 LMS 安装脚本放进 rootfs 内再 chroot 执行
           sudo tee "$ROOTFS_DIR/tmp/install-lms.sh" >/dev/null <<'EOF'
