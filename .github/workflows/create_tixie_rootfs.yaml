@@ -1,0 +1,307 @@
+name: 编译trixie RootFS(Debian+Netplan+SSH/FTP/Nginx/PHP8/LMS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      debian_suite:
+        description: 'Debian 套件(trixie = PHP 8.4)'
+        required: false
+        default: 'trixie'
+  push:
+    tags:
+      - 'rootfs-*'
+
+permissions:
+  contents: write
+
+env:
+  # ★ bookworm -> trixie
+  DEBIAN_SUITE: ${{ github.event.inputs.debian_suite || 'trixie' }}
+  MIRROR: https://mirrors.aliyun.com/debian/
+  ROOTFS_DIR: ${{ github.workspace }}/rootfs
+  OUT_DIR: ${{ github.workspace }}/out
+
+jobs:
+  build-rootfs:
+    name: 构建 RootFS
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h
+
+      - name: Install debootstrap
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y debootstrap debian-archive-keyring gnupg dirmngr
+
+      # ★ 已删除 "Ensure bookworm archive key present" 步骤
+      #   Ubuntu 22.04 runner 的 debian-archive-keyring 足够新，
+      #   debootstrap 能自动验证 trixie Release 签名。
+
+      - name: Debootstrap base system
+        run: |
+          set -euo pipefail
+          sudo mkdir -p "$ROOTFS_DIR"
+
+          # --components 仍用逗号分隔
+          # ★ php8.2-* -> php8.4-*
+          sudo debootstrap \
+            --arch=amd64 \
+            --variant=minbase \
+            --components=main,non-free-firmware \
+            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.4-cgi,php8.4-fpm,php8.4-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-linux-free,plymouth,plymouth-themes,ffmpeg,squeezelite,sudo,alsa-utils,alsa-tools,ethtool,cloud-guest-utils,wireless-regdb \
+            "$DEBIAN_SUITE" "$ROOTFS_DIR" \
+            "$MIRROR/"
+
+      - name: Verify firmware packages
+        run: |
+          set -euo pipefail
+          echo "===== 校验固件包是否装上（non-free-firmware 生效的标志）====="
+          for pkg in firmware-realtek firmware-linux-free; do
+            if sudo chroot "$ROOTFS_DIR" dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null \
+                 | grep -q "install ok installed"; then
+              echo "  [OK]   $pkg"
+            else
+              echo "  [FAIL] $pkg 未安装 —— 请检查 --components 是否为逗号分隔"
+              exit 1
+            fi
+          done
+          echo "----- 实际文件抽查 -----"
+          ls -1 "$ROOTFS_DIR/lib/firmware/rtl_nic" 2>/dev/null | head -5 || true
+          ls -1 "$ROOTFS_DIR/lib/firmware" 2>/dev/null | grep -i iwlwifi || true
+
+      - name: Configure APT sources
+        run: |
+          set -euo pipefail
+          # ★ security 源改为阿里云的 debian-security 路径（trixie 推荐 https）
+          sudo tee "$ROOTFS_DIR/etc/apt/sources.list" > /dev/null <<EOF
+          deb https://mirrors.aliyun.com/debian/ ${DEBIAN_SUITE} main non-free-firmware
+          deb https://mirrors.aliyun.com/debian/ ${DEBIAN_SUITE}-updates main non-free-firmware
+          deb https://mirrors.aliyun.com/debian-security/ ${DEBIAN_SUITE}-security main non-free-firmware
+          EOF
+          echo "----- sources.list -----"
+          cat "$ROOTFS_DIR/etc/apt/sources.list"
+
+      - name: Configure LMS network sysctl
+        run: |
+          set -euo pipefail
+          sudo mkdir -p "$ROOTFS_DIR/etc/sysctl.d"
+          sudo tee "$ROOTFS_DIR/etc/sysctl.d/99-lms-network.conf" > /dev/null <<'EOF'
+          # LMS 高解析度音乐异步推流网络优化
+          net.core.somaxconn = 1024
+          net.core.netdev_max_backlog = 5000
+          net.core.rmem_max = 16777216
+          net.core.wmem_max = 16777216
+          net.ipv4.tcp_rmem = 4096 87380 16777216
+          net.ipv4.tcp_wmem = 4096 65536 16777216
+          EOF
+          echo "----- 99-lms-network.conf -----"
+          cat "$ROOTFS_DIR/etc/sysctl.d/99-lms-network.conf"
+
+      - name: Configure netplan (DHCP dynamic IP)
+        run: |
+          set -euo pipefail
+          sudo mkdir -p "$ROOTFS_DIR/etc/systemd/network"
+          sudo ln -sf /dev/null "$ROOTFS_DIR/etc/systemd/network/99-default.link"
+
+          sudo mkdir -p "$ROOTFS_DIR/etc/netplan"
+          sudo tee "$ROOTFS_DIR/etc/netplan/01-netcfg.yaml" > /dev/null <<'EOF'
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              all-eth:
+                match:
+                  name: "*"
+                dhcp4: true
+                dhcp6: true
+          EOF
+          sudo chmod 600 "$ROOTFS_DIR/etc/netplan/01-netcfg.yaml"
+
+      - name: Configure rootfs (chroot)
+        run: |
+          set -euo pipefail
+
+          sudo mount --bind /dev  "$ROOTFS_DIR/dev"
+          sudo mount --bind /proc "$ROOTFS_DIR/proc"
+          sudo mount --bind /sys  "$ROOTFS_DIR/sys"
+          cleanup() {
+            sudo umount "$ROOTFS_DIR/dev"  || true
+            sudo umount "$ROOTFS_DIR/proc" || true
+            sudo umount "$ROOTFS_DIR/sys"  || true
+          }
+          trap cleanup EXIT
+
+          sudo rm -f "$ROOTFS_DIR/etc/resolv.conf"
+          sudo cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
+
+          sudo tee "$ROOTFS_DIR/tmp/install-lms.sh" >/dev/null <<'EOF'
+          #!/bin/bash
+          set -euo pipefail
+          cd /
+
+          apt-get update
+
+          apt-get install -y sudo samba samba-common-bin smbclient wsdd2
+
+          wget -O /tmp/lms.deb https://github.com/rmoyulong/Template/releases/download/daphilV/lms.deb
+
+          dpkg -i /tmp/lms.deb || true
+          apt-get --fix-broken install -y
+
+          rm -f /tmp/lms.deb
+          EOF
+          sudo chmod +x "$ROOTFS_DIR/tmp/install-lms.sh"
+          sudo chroot "$ROOTFS_DIR" /bin/bash /tmp/install-lms.sh
+
+          printf 'debian\n' | sudo tee "$ROOTFS_DIR/etc/hostname" > /dev/null
+          printf '127.0.0.1\tlocalhost\n127.0.1.1\tdebian\n' | sudo tee "$ROOTFS_DIR/etc/hosts" > /dev/null
+
+          sudo ln -sf /run/systemd/resolve/stub-resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
+
+          echo "root:1234" | sudo chroot "$ROOTFS_DIR" /usr/sbin/chpasswd
+          sudo chroot "$ROOTFS_DIR" chage -d 0 root
+
+          sudo sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' \
+            "$ROOTFS_DIR/etc/ssh/sshd_config"
+
+          echo "local_enable=YES" | sudo tee -a "$ROOTFS_DIR/etc/vsftpd.conf"
+          echo "write_enable=YES" | sudo tee -a "$ROOTFS_DIR/etc/vsftpd.conf"
+
+          # ★ php8.2 -> php8.4
+          sudo sed -i 's/^;*cgi.fix_pathinfo.*/cgi.fix_pathinfo=1/' \
+            "$ROOTFS_DIR/etc/php/8.4/cgi/php.ini" || true
+
+          sudo mkdir -p "$ROOTFS_DIR/etc/plymouth"
+          sudo tee "$ROOTFS_DIR/etc/plymouth/plymouthd.conf" > /dev/null <<'EOF'
+          [Daemon]
+          Theme=spinner
+          ShowDelay=0
+          EOF
+          sudo chroot "$ROOTFS_DIR" plymouth-set-default-theme spinner || true
+          echo "----- Plymouth 主题配置 -----"
+          sudo cat "$ROOTFS_DIR/etc/plymouth/plymouthd.conf"
+
+          sudo mkdir -p "$ROOTFS_DIR/etc/default"
+          sudo tee "$ROOTFS_DIR/etc/default/grub" > /dev/null <<'EOF'
+          GRUB_DEFAULT=0
+          GRUB_TIMEOUT=5
+          GRUB_DISTRIBUTOR="Debian"
+          GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0 pcie_aspm=off"
+          GRUB_CMDLINE_LINUX=""
+          GRUB_DISABLE_OS_PROBER=true
+          EOF
+
+          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-networkd || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-networkd-wait-online || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-resolved || true
+          # ★ php8.2-fpm -> php8.4-fpm
+          sudo chroot "$ROOTFS_DIR" systemctl enable nginx php8.4-fpm ssh vsftpd || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-timesyncd || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable fake-hwclock || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable lyrionmusicserver || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable squeezelite || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable smbd || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable wsdd2 || true
+
+          sudo chroot "$ROOTFS_DIR" netplan generate || true
+
+          sudo chroot "$ROOTFS_DIR" apt-get clean
+          sudo rm -rf "$ROOTFS_DIR/var/lib/apt/lists/"* || true
+
+      - name: Configure audio (squeezelite + HDA no-powersave)
+        run: |
+          set -euo pipefail
+
+          sudo mkdir -p "$ROOTFS_DIR/etc/modprobe.d"
+          sudo tee "$ROOTFS_DIR/etc/modprobe.d/audio-disable-powersave.conf" > /dev/null <<'EOF'
+          options snd_hda_intel power_save=0
+          EOF
+
+          sudo mkdir -p "$ROOTFS_DIR/etc/default"
+          sudo tee "$ROOTFS_DIR/etc/default/squeezelite" > /dev/null <<'EOF'
+          # Defaults for squeezelite initscript
+          # sourced by /etc/init.d/squeezelite
+          # installed at /etc/default/squeezelite by the maintainer scripts
+
+          SL_NAME="Squeezelite"
+
+          SL_SOUNDCARD="hw:0,0"
+
+          #SB_SERVER_IP="192.168.x.y"
+
+          SB_EXTRA_ARGS="-D dop -p 99 -b 4096:6892"
+          EOF
+
+          echo "----- /etc/default/squeezelite -----"
+          sudo cat "$ROOTFS_DIR/etc/default/squeezelite"
+          echo "----- /etc/modprobe.d/audio-disable-powersave.conf -----"
+          sudo cat "$ROOTFS_DIR/etc/modprobe.d/audio-disable-powersave.conf"
+
+      - name: Package rootfs
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT_DIR"
+          sudo tar --numeric-owner --acls --xattrs -zcf "$OUT_DIR/rootfs.tar.gz" -C "$ROOTFS_DIR" .
+          ls -lh "$OUT_DIR/rootfs.tar.gz"
+
+          ( cd "$OUT_DIR" && sha256sum rootfs.tar.gz > rootfs.tar.gz.sha256 )
+
+          SIZE=$(stat -c%s "$OUT_DIR/rootfs.tar.gz")
+          LIMIT=$((1900 * 1024 * 1024))
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            cd "$OUT_DIR"
+            split -b 1900m rootfs.tar.gz rootfs.tar.gz.part-
+            rm -f rootfs.tar.gz
+            ls -lh
+          fi
+
+      - name: Verify output files
+        run: |
+          set -euo pipefail
+          ls -lh "$OUT_DIR"
+          test -f "$OUT_DIR/rootfs.tar.gz" || test -f "$OUT_DIR/rootfs.tar.gz.part-aa"
+
+      - name: Create Release and upload
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          replacesArtifacts: true
+          artifactErrorsFailBuild: true
+          tag: rootfs-${{ env.DEBIAN_SUITE }}-latest
+          name: rootfs-${{ env.DEBIAN_SUITE }}-latest
+          artifacts: ${{ env.OUT_DIR }}/*
+          body: |
+            Debian ${{ env.DEBIAN_SUITE }} rootfs (x86_64)
+
+            **🧊 固件信息**
+
+            - ➦ 💻 固件平台：x86-64-linux
+            - ➦ 🚀 内核版本：6.12.115（配合 kernel-image 发布使用）
+            - ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.4-cgi / php8.4-fpm / LMS
+            - ➦ 🔌 网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
+            - ➦ 🧩 initramfs：MODULES=dep + COMPRESS=zstd + FRAMEBUFFER，体积最小、解压最快；固件 hook（zz-firmware）只收 rtl_nic（iwlwifi 已屏蔽，其固件不再入 initramfs）
+            - ➦ 🎨 开机画面：Plymouth（主题 spinner，GRUB 菜单停留 5 秒）
+            - ➦ 🎵 音频：squeezelite 默认 plughw:0,0（自动采样率转换）+ HDA 关闭省电（options snd_hda_intel power_save=0），避免响一下就断
+            - ➦ 📶 无线：Intel Centrino Advanced-N 6205 判定为本平台硬件级间歇故障（ASPM 关闭 / 驱动省电 / intel_ips / 换固件均无效），已屏蔽 iwlwifi —— 启动不再空转重试、dmesg 不再被寄存器 dump 刷屏；本机以板载 RTL8111 有线联网（全内建版另将 CONFIG_IWLWIFI 置 n）
+
+            ---
+
+            **初始 root 密码：`1234`**
+            首次通过 SSH 登录会强制要求修改密码；FTP 需在改密后才能登录。
+
+            若下载到的是 rootfs.tar.gz，直接解压：
+              tar -xzf rootfs.tar.gz -C /目标分区
+
+            若下载到的是 rootfs.tar.gz.part-* 分片，先合并再校验：
+              cat rootfs.tar.gz.part-* > rootfs.tar.gz
+              sha256sum -c rootfs.tar.gz.sha256
