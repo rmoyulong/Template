@@ -72,7 +72,7 @@ jobs:
           # 资源上传失败时让构建直接报错，避免"没传上去却显示成功"
           artifactErrorsFailBuild: true
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag: test-${{ matrix.config_type }}
+          tag: test
           body: |
             ====================🧊固件信息🧊=======================
             ➦ 💻 固件平台：x86-64-linux
