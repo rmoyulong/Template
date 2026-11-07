@@ -11,12 +11,12 @@ permissions:
 
 env:
   # 仅作兜底展示；真实版本号由 modules.tar.gz 内的目录名自动识别（如 6.12.115-rt）
-  KERNEL_VERSION: '6.12.115'
+  KERNEL_VERSION: '6.12.30-daphile'
   # 从 4096 提升到 6144，给 rootfs + 运行期 apt 留足空间，避免写满产生半截缓存
   IMG_SIZE_MB: 6144
   WORK_DIR: ${{ github.workspace }}/work
   IMG_FILE: ${{ github.workspace }}/work/debian-rootfs-mbr-lms.img
-  ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-bookworm-latest/rootfs.tar.gz
+  ROOTFS_URL: https://github.com/rmoyulong/packages_lang_golang/releases/download/25.06/rootfs.tar.gz
   # 默认用「模块化」内核（带真实 .ko）。若要用「全内建」内核，
   # 把下面两个 URL 末尾的 -%E6%A8%A1%E5%9D%97%E5%8C%96（-模块化）去掉即可。
   MODULES_URL: https://github.com/rmoyulong/Template/releases/download/daphilV/modules.tar.gz
