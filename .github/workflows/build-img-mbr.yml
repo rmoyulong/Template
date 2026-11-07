@@ -16,7 +16,7 @@ env:
   IMG_SIZE_MB: 6144
   WORK_DIR: ${{ github.workspace }}/work
   IMG_FILE: ${{ github.workspace }}/work/debian-rootfs-mbr.img
-  ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-bookworm-latest/rootfs.tar.gz
+  ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-trixie-latest/rootfs.tar.gz
   # 默认用「模块化」内核（带真实 .ko）。若要用「全内建」内核，
   # 把下面两个 URL 末尾的 -%E6%A8%A1%E5%9D%97%E5%8C%96（-模块化）去掉即可。
   MODULES_URL: https://github.com/rmoyulong/Template/releases/download/kernel-modules-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8-%E6%A8%A1%E5%9D%97%E5%8C%96/modules.tar.gz
