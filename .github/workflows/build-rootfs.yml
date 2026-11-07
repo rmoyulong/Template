@@ -120,12 +120,16 @@ jobs:
           cat "$ROOTFS_DIR/etc/sysctl.d/99-lms-network.conf"
           
           sudo mkdir -p "$ROOTFS_DIR/etc/update-motd.d"
-          sudo cp ${{ github.workspace }}/patch/cats_banner "$ROOTFS_DIR/etc/cats_banner"
+          sudo cp ${{ github.workspace }}/patch/cats_banner $ROOTFS_DIR/etc/cats_banner
           sudo tee "$ROOTFS_DIR/etc/update-motd.d/40-cats_banner" > /dev/null <<'EOF'
           #!/bin/bash
           set -o pipefail
           cat /etc/cats_banner
           EOF
+          
+          sudo mkdir -p "$ROOTFS_DIR/etc/default"
+          sudo cp ${{ github.workspace }}/patch/locale.conf $ROOTFS_DIR/etc/default/locale.conf
+          sudo cp ${{ github.workspace }}/patch/locale.gen $ROOTFS_DIR/etc/etc/locale.gen
 
       - name: Configure netplan (DHCP dynamic IP)
         run: |
@@ -170,10 +174,6 @@ jobs:
           # 直接 cp 会报 "not writing through dangling symlink"，故先删除再写
           sudo rm -f "$ROOTFS_DIR/etc/resolv.conf"
           sudo cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
-          
-          sudo mkdir -p "$ROOTFS_DIR/etc/default"
-          sudo cp ${{ github.workspace }}/patch/locale.conf "$ROOTFS_DIR/etc/default/locale.conf"
-          sudo cp ${{ github.workspace }}/patch/locale.gen "$ROOTFS_DIR/etc/etc/locale.gen"
 
           # 把 LMS 安装脚本放进 rootfs 内再 chroot 执行
           sudo tee "$ROOTFS_DIR/tmp/install-lms.sh" >/dev/null <<'EOF'
