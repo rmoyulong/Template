@@ -112,8 +112,8 @@ jobs:
           cat "/mnt/rootfs/etc/samba/smb.conf"
 
           #修改为中国时间
-          rm -rf /mnt/rootfs/etc/localtime
-          ln -s /usr/share/zoneinfo/Asia/Shanghai /mnt/rootfs/etc/localtime
+          sudo rm -rf /mnt/rootfs/etc/localtime
+          sudo ln -s /usr/share/zoneinfo/Asia/Shanghai /mnt/rootfs/etc/localtime
           
           #中文环境配置
           #sudo mkdir -p "/mnt/rootfs/etc/default"

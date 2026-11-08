@@ -126,11 +126,11 @@ jobs:
           set -o pipefail
           cat /etc/cats_banner
           EOF
-          chmod +x $ROOTFS_DIR/etc/update-motd.d/40-cats_banner
+          sudo chmod +x $ROOTFS_DIR/etc/update-motd.d/40-cats_banner
           
           #修改为中国时间
-          rm -rf $ROOTFS_DIR/etc/localtime
-          ln -s /usr/share/zoneinfo/Asia/Shanghai $ROOTFS_DIR/etc/localtime
+          sudo rm -rf $ROOTFS_DIR/etc/localtime
+          sudo ln -s /usr/share/zoneinfo/Asia/Shanghai $ROOTFS_DIR/etc/localtime
 
           #修正为中文环境
           sudo mkdir -p "$ROOTFS_DIR/etc/default"
