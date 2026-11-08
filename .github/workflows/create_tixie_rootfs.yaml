@@ -95,7 +95,7 @@ jobs:
           sudo tee "$ROOTFS_DIR/etc/apt/sources.list" > /dev/null <<EOF
           deb https://mirrors.aliyun.com/debian/ ${DEBIAN_SUITE} main non-free-firmware
           deb https://mirrors.aliyun.com/debian/ ${DEBIAN_SUITE}-updates main non-free-firmware
-          deb https://mirrors.aliyun.com/debian-security/ ${DEBIAN_SUITE}-security main non-free-firmware
+          deb http://security.debian.org/debian-security ${DEBIAN_SUITE}-security main non-free-firmware
           EOF
           echo "----- sources.list -----"
           cat "$ROOTFS_DIR/etc/apt/sources.list"
