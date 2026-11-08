@@ -375,13 +375,13 @@ jobs:
             内核：${{ env.KVER }}
             rootfs：Debian trixie + SSH/FTP/Nginx/PHP8/LMS
             初始 root 密码：1234（首次 SSH 登录强制改密
-            
+            ```
             ## 使用 rufus 写入 U 盘或硬盘
             ## 将系统安装到机器硬盘（U 盘启动后运行）镜像内已提供两份安装脚本： 
             ## 两者都会从当前 U 盘系统补入内核与 modules；
             1) rsync 版：直接把当前 U 盘系统整机同步到内部硬盘
             sudo sh /root/install.sh
-            
+            ```
             2) rootfs.tar.gz 版：需自备 rootfs.tar.gz
             镜像未内嵌该包（内嵌会让镜像体积翻倍），请自行放到 U 盘系统的 /root/ 下：
             # 本机可联网时直接下载（也可用 scp 从别处传入 /root/rootfs.tar.gz）
@@ -389,3 +389,4 @@ jobs:
             sudo sh /root/install-plus.sh
             # 也可显式指定其它压缩包路径：
             # sudo sh /root/install-plus.sh /path/to/rootfs.tar.gz
+            ```
