@@ -1,7 +1,10 @@
-编译Bootable IMG (MBR兼容版)-达菲版[个人学习]
+name: 编译Bootable IMG (MBR兼容版)-达菲版[个人学习]
 
 on:
   workflow_dispatch:
+  push:
+    tags:
+      - 'img-*'
 
 permissions:
   contents: write
