@@ -428,6 +428,11 @@ jobs:
             exit 1
           }
           echo " [OK] SL_SOUNDCARD 使用 plughw（自动采样率转换）"
+          
+          # ---------- 4) 设置LMS plugins ----------
+          sudo mkdir -p "$ROOTFS_DIR/var/lib/squeezeboxserver/cache/InstalledPlugins/Plugins"
+          sudo mkdir -p "$ROOTFS_DIR/var/lib/squeezeboxserver/prefs/plugin"
+          sudo tar zxvfp "${{ github.workspace }}/patch/plugins.tar.gz" -C "$ROOTFS_DIR"          
 
       - name: Package rootfs
         run: |
