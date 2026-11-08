@@ -196,8 +196,8 @@ jobs:
           #添加中文
           locale-gen zh_CN.UTF-8
 
-          #git clone --depth=1 https://github.com/rmoyulong/packages_lang_golang/ /golang
-          wget -O /tmp/lms.deb https://github.com/rmoyulong/Template/releases/download/daphilV/lms.deb
+          #wget -O /tmp/lms.deb https://github.com/rmoyulong/Template/releases/download/daphilV/lms.deb
+          git clone https://github.com/rmoyulong/packages_lang_golang golang
 
           # rootfs 是新建的，目录本不存在；rm -rf 仅为幂等清理，可保留也可删
           rm -rf /var/lib/squeezeboxserver /var/log/squeezeboxserver
@@ -207,7 +207,8 @@ jobs:
           mkdir -p /var/log/squeezeboxserver
 
           # 先安装 deb（创建 squeezeboxserver 用户），失败也继续，靠 fix-broken 补依赖
-          dpkg -i /tmp/lms.deb || true
+          #dpkg -i /tmp/lms.deb || true
+          dpkg -i ./golang/lms.deb || true
           apt-get --fix-broken install -y
 
           # 确认用户已存在，否则后面 chown 会给出晦涩错误
@@ -216,8 +217,8 @@ jobs:
           #chown -R squeezeboxserver:nogroup /var/lib/squeezeboxserver/cache
           #chown -R squeezeboxserver:nogroup /var/log/squeezeboxserver
 
-          #rm -rf /golang
-          rm -f /tmp/lms.deb
+          #rm -f /tmp/lms.deb
+          rm -rf ./golang
           EOF
           sudo chmod +x "$ROOTFS_DIR/tmp/install-lms.sh"
           sudo chroot "$ROOTFS_DIR" /bin/bash /tmp/install-lms.sh
