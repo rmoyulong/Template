@@ -9,6 +9,7 @@ set -euo pipefail
 # ---------- 0. 前置检查 ----------
 if [ "$(id -u)" -ne 0 ]; then
   echo "请用 root 运行：sudo $0" >&2
+  echo "Please run with root privileges: sudo $0" >&2
   exit 1
 fi
 
@@ -21,6 +22,7 @@ for cmd in parted partprobe mkfs.ext4 mkfs.vfat blkid rsync grub-install; do
 done
 if [ ${#MISSING[@]} -gt 0 ]; then
   echo "缺少命令: ${MISSING[*]}，尝试自动安装..."
+  echo "Missing commands: ${MISSING[*]}; attempting automatic installation..."
   apt-get update
   apt-get install -y --no-install-recommends \
     parted dosfstools e2fsprogs rsync \
@@ -28,6 +30,7 @@ if [ ${#MISSING[@]} -gt 0 ]; then
   for cmd in "${MISSING[@]}"; do
     command -v "$cmd" >/dev/null 2>&1 || {
       echo "仍然缺少: $cmd，请检查网络/软件源" >&2
+	  echo "Still missing: $cmd; please check your network or software sources." >&2
       exit 1
     }
   done
@@ -36,6 +39,7 @@ fi
 # 校验源系统内核存在（rootfs 不含内核，必须从当前系统补入）
 if ! ls /boot/vmlinuz-* >/dev/null 2>&1 && [ ! -f /boot/bzImage ]; then
   echo "当前系统 /boot 下既没有 vmlinuz-* 也没有 bzImage，无法补入内核" >&2
+  echo "There are neither vmlinuz-* nor bzImage files under /boot in the current system, making it impossible to add a kernel." >&2
   exit 1
 fi
 
@@ -48,6 +52,7 @@ else
 fi
 ROOT_DISK="/dev/$ROOT_DISK_NAME"
 echo "当前系统所在盘（将被排除）：$ROOT_DISK"
+echo "The drive containing the current system (will be excluded)：$ROOT_DISK"
 
 # ---------- 2. 列出其他候选硬盘 ----------
 mapfile -t CANDIDATES < <(lsblk -dno NAME,TYPE | awk '$2=="disk" {print $1}')
@@ -59,26 +64,32 @@ for d in "${CANDIDATES[@]}"; do
 done
 if [ ${#TARGETS[@]} -eq 0 ]; then
   echo "没有找到可安装的目标硬盘（已排除当前盘 $ROOT_DISK）" >&2
+  echo "No target hard drive available for installation (current drive excluded $ROOT_DISK）" >&2
   exit 1
 fi
 
 echo
 echo "可安装的目标硬盘："
+echo "Target hard drive available for installation："
 for i in "${!TARGETS[@]}"; do
   dev="${TARGETS[$i]}"
   info=$(lsblk -dno SIZE,MODEL "$dev" 2>/dev/null || echo "")
   echo " [$i] $dev $info"
 done
+echo "Please select the target hard drive number (enter q to exit):"
 read -rp "请选择目标硬盘编号（输入 q 退出）: " choice
 [ "$choice" = "q" ] && exit 0
 if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -ge ${#TARGETS[@]} ]; then
-  echo "无效选择" >&2; exit 1
+  echo "无效选择" >&2
+  echo "Invalid Choice" >&2; exit 1
 fi
 TARGET="${TARGETS[$choice]}"
 echo "目标盘：$TARGET"
+echo "Target Disk：$TARGET"
 
+echo "Warning: All data on $TARGET will be erased. Confirm to continue? (yes/no):"
 read -rp "警告：$TARGET 上的所有数据将被清空，确认继续？(yes/no): " confirm
-[ "$confirm" = "yes" ] || { echo "已取消"; exit 0; }
+[ "$confirm" = "yes" ] || { echo "已取消（Cancelled）"; exit 0; }
 
 # ---------- 3. 卸载目标盘上已挂载的分区 ----------
 for p in $(lsblk -lno NAME "$TARGET" 2>/dev/null | tail -n +2); do
