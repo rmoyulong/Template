@@ -393,8 +393,8 @@ jobs:
       - name: Create Release and upload
         uses: ncipollo/release-action@v1
         with:
-          tag: image-debian-latest
-          name: image-debian-latest
+          tag: image-debian-7-latest
+          name: image-debian-7-latest
           allowUpdates: true
           replacesArtifacts: true
           artifacts: |
