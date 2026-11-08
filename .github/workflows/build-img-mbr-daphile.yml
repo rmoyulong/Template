@@ -374,7 +374,7 @@ jobs:
             ${{ env.WORK_DIR }}/debian-rootfs-mbr-daphile.img.gz
             ${{ env.WORK_DIR }}/debian-rootfs-mbr-daphile.img.gz.sha256
           body: |
-            Debian IMG（MBR 兼容版）
+            Debian IMG（MBR 兼容版）-达菲内核
             分区表为 MBR，支持老 BIOS / 32 位 UEFI / 64 位 UEFI
             内核：${{ env.KVER }}
             rootfs：Debian trixie + SSH/FTP/Nginx/PHP8/LMS
