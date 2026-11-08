@@ -15,7 +15,7 @@ env:
   # 从 4096 提升到 6144，给 rootfs + 运行期 apt 留足空间，避免写满产生半截缓存
   IMG_SIZE_MB: 6144
   WORK_DIR: ${{ github.workspace }}/work
-  IMG_FILE: ${{ github.workspace }}/work/debian-rootfs-mbr.img
+  IMG_FILE: ${{ github.workspace }}/work/debian-rootfs-mbr-daphile.img
   ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-trixie-latest/rootfs.tar.gz
   # 默认用「模块化」内核（带真实 .ko）。若要用「全内建」内核，
   # 把下面两个 URL 末尾的 -%E6%A8%A1%E5%9D%97%E5%8C%96（-模块化）去掉即可。
@@ -360,19 +360,19 @@ jobs:
           sudo losetup -d "$LOOP" || true
           cd "$WORK_DIR"
           gzip -9 -k "$IMG_FILE"
-          sha256sum debian-rootfs-mbr-lms.img.gz > debian-rootfs-mbr-lms.img.gz.sha256
+          sha256sum debian-rootfs-mbr-daphile.img.gz > debian-rootfs-mbr-daphile.img.gz.sha256
           ls -lh
 
       - name: Create Release and upload
         uses: ncipollo/release-action@v1
         with:
-          tag: image-debian-MBR-7-latest
-          name: image-debian-MBR-7-latest
+          tag: image-debian-MBR-daphile
+          name: image-debian-MBR--daphile
           allowUpdates: true
           replacesArtifacts: true
           artifacts: |
-            ${{ env.WORK_DIR }}/debian-rootfs-mbr-lms.img.gz
-            ${{ env.WORK_DIR }}/debian-rootfs-mbr-lms.img.gz.sha256
+            ${{ env.WORK_DIR }}/debian-rootfs-mbr-daphile.img.gz
+            ${{ env.WORK_DIR }}/debian-rootfs-mbr-daphile.img.gz.sha256
           body: |
             Debian IMG（MBR 兼容版）
             分区表为 MBR，支持老 BIOS / 32 位 UEFI / 64 位 UEFI
