@@ -127,11 +127,16 @@ jobs:
           cat /etc/cats_banner
           EOF
           
+          #修改为中国时间
+          rm -rf $ROOTFS_DIR/etc/localtime
+          ln -s /usr/share/zoneinfo/Asia/Shanghai $ROOTFS_DIR/etc/localtime
+
+          #修正为中文环境
           sudo mkdir -p "$ROOTFS_DIR/etc/default"
           sudo cp ${{ github.workspace }}/patch/locale.conf $ROOTFS_DIR/etc/default/locale.conf
           sudo cp ${{ github.workspace }}/patch/locale.gen $ROOTFS_DIR/etc/locale.gen
           sudo cp ${{ github.workspace }}/patch/locale.conf $ROOTFS_DIR/etc/locale.conf
-
+          
       - name: Configure netplan (DHCP dynamic IP)
         run: |
           set -euo pipefail

@@ -117,6 +117,10 @@ jobs:
           #sudo mkdir -p "/mnt/rootfs/etc/samba"
           sudo cp ${{ github.workspace }}/patch/smb.conf /mnt/rootfs/etc/samba/smb.conf
           cat "/mnt/rootfs/etc/samba/smb.conf"
+
+          #修改为中国时间
+          rm -rf /mnt/rootfs/etc/localtime
+          ln -s /usr/share/zoneinfo/Asia/Shanghai /mnt/rootfs/etc/localtime
           
           #中文环境配置
           #sudo mkdir -p "/mnt/rootfs/etc/default"
@@ -124,7 +128,7 @@ jobs:
           sudo cp ${{ github.workspace }}/patch/locale.gen /mnt/rootfs/etc/locale.gen
           cat "/mnt/rootfs/etc/default/locale.conf"
           cat "/mnt/rootfs/etc/locale.gen"
-          ################################################### 
+          ###################################################          
           
           #####添加当前系统rootfs自动扩容脚本
           sudo cp ${{ github.workspace }}/patch/resize_rootfs.sh /mnt/rootfs/root/resize_rootfs.sh
