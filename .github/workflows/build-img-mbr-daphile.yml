@@ -2,9 +2,6 @@
 
 on:
   workflow_dispatch:
-  push:
-    tags:
-      - 'img-*'
 
 permissions:
   contents: write
