@@ -391,5 +391,5 @@ jobs:
             #本机可联网时直接下载（也可用 scp 从别处传入 /root/rootfs.tar.gz）
             sudo wget -O /root/rootfs.tar.gz ${{ env.ROOTFS_URL }}
             sudo sh /root/install-plus.sh
-            # 也可显式指定其它压缩包路径
-            # sudo sh /root/install-plus.sh /path/to/rootfs.tar.gz
+            #也可显式指定其它压缩包路径
+            sudo sh /root/install-plus.sh /path/to/rootfs.tar.gz
