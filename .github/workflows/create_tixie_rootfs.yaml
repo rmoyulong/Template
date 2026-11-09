@@ -93,8 +93,8 @@ jobs:
           set -euo pipefail
           # ★ security 源改为阿里云的 debian-security 路径（trixie 推荐 https）
           sudo tee "$ROOTFS_DIR/etc/apt/sources.list" > /dev/null <<EOF
-          deb https://mirrors.aliyun.com/debian/ ${DEBIAN_SUITE} main non-free-firmware
-          deb https://mirrors.aliyun.com/debian/ ${DEBIAN_SUITE}-updates main non-free-firmware
+          deb http://ftp.cn.debian.org/debian/ ${DEBIAN_SUITE} main non-free-firmware
+          deb http://ftp.cn.debian.org/debian/ ${DEBIAN_SUITE}-updates main non-free-firmware
           deb http://security.debian.org/debian-security ${DEBIAN_SUITE}-security main non-free-firmware
           EOF
           echo "----- sources.list -----"
@@ -302,7 +302,7 @@ jobs:
           GRUB_DEFAULT=0
           GRUB_TIMEOUT=5
           GRUB_DISTRIBUTOR="Debian"
-          GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0 pcie_aspm=off"
+          GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0 pcie_aspm=off usbcore.autosuspend=-1"
           GRUB_CMDLINE_LINUX=""
           GRUB_DISABLE_OS_PROBER=true
           EOF
