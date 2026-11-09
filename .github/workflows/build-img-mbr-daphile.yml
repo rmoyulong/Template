@@ -121,6 +121,10 @@ jobs:
           sudo cp ${{ github.workspace }}/patch/locale.gen /mnt/rootfs/etc/locale.gen
           cat "/mnt/rootfs/etc/default/locale.conf"
           cat "/mnt/rootfs/etc/locale.gen"
+          
+          #asound.conf squeezelit配置
+          sudo cp ${{ github.workspace }}/patch/asound.conf_daphile /mnt/rootfs/etc/asound.conf
+          sudo cp ${{ github.workspace }}/patch/squeezelite_daphile /mnt/rootfs/etc/default/squeezelite
           ###################################################          
           
           #####添加当前系统rootfs自动扩容脚本
