@@ -17,7 +17,7 @@ permissions:
 env:
   # ★ bookworm -> trixie
   DEBIAN_SUITE: ${{ github.event.inputs.debian_suite || 'trixie' }}
-  MIRROR: https://mirrors.aliyun.com/debian/
+  MIRROR: http://ftp.cn.debian.org/debian/
   ROOTFS_DIR: ${{ github.workspace }}/rootfs
   OUT_DIR: ${{ github.workspace }}/out
 
@@ -69,7 +69,7 @@ jobs:
             --components=main,non-free-firmware \
             --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.4-cgi,php8.4-fpm,php8.4-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-iwlwifi,firmware-linux-free,plymouth,plymouth-themes,ffmpeg,squeezelite,sudo,alsa-utils,alsa-tools,ethtool,cloud-guest-utils,wireless-regdb \
             "$DEBIAN_SUITE" "$ROOTFS_DIR" \
-            "$MIRROR/"
+            "$MIRROR"
 
       - name: Verify firmware packages
         run: |
@@ -93,8 +93,8 @@ jobs:
           set -euo pipefail
           # ★ security 源改为阿里云的 debian-security 路径（trixie 推荐 https）
           sudo tee "$ROOTFS_DIR/etc/apt/sources.list" > /dev/null <<EOF
-          deb http://ftp.cn.debian.org/debian/ ${DEBIAN_SUITE} main non-free-firmware
-          deb http://ftp.cn.debian.org/debian/ ${DEBIAN_SUITE}-updates main non-free-firmware
+          deb $MIRROR ${DEBIAN_SUITE} main non-free-firmware
+          deb $MIRROR ${DEBIAN_SUITE}-updates main non-free-firmware
           deb http://security.debian.org/debian-security ${DEBIAN_SUITE}-security main non-free-firmware
           EOF
           echo "----- sources.list -----"
