@@ -90,19 +90,69 @@ jobs:
           ccache -M 2G
           make ARCH=x86 -j"${BUILD_JOBS}" bzImage modules
           
-      - name: 检查磁盘空间
-        run: |
-            echo "=== 磁盘空间 ==="
-            df -h
-            echo "=== Inode 使用情况 ==="
-            df -i
-            echo "=== 工作空间使用情况 ==="
-            du -sh "$GITHUB_WORKSPACE"/* 2>/dev/null | sort -h
-
       - name: 清理构建文件
         run: |
           rm -rf "$HOME/.cache/ccache"
           df -h
+          
+      - name: 打包内核模块
+        shell: bash
+        run: |
+            set -Eeuo pipefail
+
+            echo "=== Workspace ==="
+            echo "$GITHUB_WORKSPACE"
+            pwd
+
+            echo "=== Disk space ==="
+            df -h "$GITHUB_WORKSPACE"
+            df -i "$GITHUB_WORKSPACE"
+
+            echo "=== Find installed modules ==="
+            find "$GITHUB_WORKSPACE/package" -type d -path '*/lib/modules/*' 2>/dev/null || true
+
+            MODULE_DIR="$GITHUB_WORKSPACE/package/rootfs/lib/modules/7.3.3"
+
+            if [ ! -d "$MODULE_DIR" ]; then
+              echo "::error::Module directory not found: $MODULE_DIR"
+              echo "=== Package directory contents ==="
+              ls -lah "$GITHUB_WORKSPACE/package" || true
+              exit 1
+            fi
+
+            mkdir -p "$GITHUB_WORKSPACE/release-files"
+
+            OUTPUT="$GITHUB_WORKSPACE/release-files/modules.tar.gz"
+
+            echo "=== Packaging modules ==="
+            du -sh "$MODULE_DIR"
+
+            tar -czf "$OUTPUT" -C "$MODULE_DIR" .
+
+            echo "=== Package result ==="
+            ls -lh "$OUTPUT"
+            df -h "$GITHUB_WORKSPACE"
+            
+      - name: 准备发布文件
+        shell: bash
+        run: |
+            set -Eeuo pipefail
+
+            mkdir -p "$GITHUB_WORKSPACE/release-files"
+
+            KERNEL_DIR="$GITHUB_WORKSPACE/linux-7.3.3"
+
+            test -f "$KERNEL_DIR/arch/x86/boot/bzImage"
+            test -f "$KERNEL_DIR/.config"
+
+            cp "$KERNEL_DIR/arch/x86/boot/bzImage" \
+               "$GITHUB_WORKSPACE/release-files/bzImage"
+
+            cp "$KERNEL_DIR/.config" \
+               "$GITHUB_WORKSPACE/release-files/config"
+
+            ls -lh "$GITHUB_WORKSPACE/release-files/"
+    
     
       - name: 打包发布文件
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules != false }}
