@@ -98,6 +98,8 @@ jobs:
           for f in config_migration_check.txt config_diff_from_x86_64_defconfig.txt; do
             if [ -f "$f" ]; then cp "$f" "$GITHUB_WORKSPACE/diagnostics/"; fi
           done
+          
+          grep -E 'CONFIG_(X86_64|PREEMPT_RT|PREEMPTION|SQUASHFS|OVERLAY_FS|INTEL_MEI_TXE|LPC_ICH)=' .config
 
       - name: 仅构建配置
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_modules == false }}
