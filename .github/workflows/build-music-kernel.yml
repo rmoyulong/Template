@@ -50,22 +50,15 @@ jobs:
             -o linux-${KERNEL_VERSION}.tar.xz
           tar -xf linux-${KERNEL_VERSION}.tar.xz
 
-      - name: 执行 Daphile 配置迁移
+      - name: 加载最终内核配置
         run: |
-          MIGRATION_DIR="$GITHUB_WORKSPACE/kernel_config_migration_7.3.3"
-          test -f "$MIGRATION_DIR/apply_migration.sh"
           cd "linux-${KERNEL_VERSION}"
-          bash "$MIGRATION_DIR/apply_migration.sh"
+          MIGRATION_DIR="$GITHUB_WORKSPACE/kernel_config_migration_7.3.3"
+          cp "$MIGRATION_DIR/config-7.3.3-rt-mod-daphile-final.conf" .config
+          make olddefconfig
 
       - name: 验证最终内核配置
         run: |
-          cd "linux-${KERNEL_VERSION}"
-          test -f .config.daphile-7.3.3
-          grep -qx 'CONFIG_X86_64=y' .config.daphile-7.3.3
-          grep -qx 'CONFIG_PREEMPT_RT=y' .config.daphile-7.3.3
-          cp .config.daphile-7.3.3 .config
-          make ARCH=x86 olddefconfig
-          
           echo "===== 音频配置 ====="
           grep -E \
           '^(CONFIG_SOUND=|CONFIG_SND=|CONFIG_SND_PCM=|CONFIG_SND_ALOOP=|CONFIG_SND_HDA_INTEL=|CONFIG_SND_HDA_CORE=|CONFIG_SND_HDA_CODEC_REALTEK=|CONFIG_SND_HDA_CODEC_HDMI=|CONFIG_SND_USB_AUDIO=|CONFIG_KERNEL_ZSTD=)' \
@@ -88,7 +81,7 @@ jobs:
               exit 1
             }
           done
-
+          
           grep -qx 'CONFIG_X86_64=y' .config
           grep -qx 'CONFIG_PREEMPT_RT=y' .config
           cp .config .config.daphile-7.3.3
