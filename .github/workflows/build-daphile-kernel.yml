@@ -90,93 +90,117 @@ jobs:
           ccache -M 2G
           make ARCH=x86 -j"${BUILD_JOBS}" bzImage modules
           
-      - name: 清理构建文件
-        run: |
-          rm -rf "$HOME/.cache/ccache"
-          df -h
-          
-      - name: 打包内核模块
-        shell: bash
-        run: |
-            set -Eeuo pipefail
-
-            echo "=== Workspace ==="
-            echo "$GITHUB_WORKSPACE"
-            pwd
-
-            echo "=== Disk space ==="
-            df -h "$GITHUB_WORKSPACE"
-            df -i "$GITHUB_WORKSPACE"
-
-            echo "=== Find installed modules ==="
-            find "$GITHUB_WORKSPACE/package" -type d -path '*/lib/modules/*' 2>/dev/null || true
-
-            MODULE_DIR="$GITHUB_WORKSPACE/package/rootfs/lib/modules/7.3.3"
-
-            if [ ! -d "$MODULE_DIR" ]; then
-              echo "::error::Module directory not found: $MODULE_DIR"
-              echo "=== Package directory contents ==="
-              ls -lah "$GITHUB_WORKSPACE/package" || true
-              exit 1
-            fi
-
-            mkdir -p "$GITHUB_WORKSPACE/release-files"
-
-            OUTPUT="$GITHUB_WORKSPACE/release-files/modules.tar.gz"
-
-            echo "=== Packaging modules ==="
-            du -sh "$MODULE_DIR"
-
-            tar -czf "$OUTPUT" -C "$MODULE_DIR" .
-
-            echo "=== Package result ==="
-            ls -lh "$OUTPUT"
-            df -h "$GITHUB_WORKSPACE"
-            
-      - name: 准备发布文件
-        shell: bash
-        run: |
-            set -Eeuo pipefail
-
-            mkdir -p "$GITHUB_WORKSPACE/release-files"
-
-            KERNEL_DIR="$GITHUB_WORKSPACE/linux-7.3.3"
-
-            test -f "$KERNEL_DIR/arch/x86/boot/bzImage"
-            test -f "$KERNEL_DIR/.config"
-
-            cp "$KERNEL_DIR/arch/x86/boot/bzImage" \
-               "$GITHUB_WORKSPACE/release-files/bzImage"
-
-            cp "$KERNEL_DIR/.config" \
-               "$GITHUB_WORKSPACE/release-files/config"
-
-            ls -lh "$GITHUB_WORKSPACE/release-files/"
-    
-    
-      - name: 打包发布文件
+      # 安装编译好的内核模块到暂存目录
+      - name: 安装内核模块
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules != false }}
+        shell: bash
         run: |
-            set -euo pipefail
-            
-            MODULE_DIR="$GITHUB_WORKSPACE/package/rootfs/lib/modules/7.3.3"
-            mkdir -p "$GITHUB_WORKSPACE/release-files"
-            
-            OUTPUT="$GITHUB_WORKSPACE/release-files/modules.tar.gz"            
-            test -d "$MODULE_DIR"            
-            tar -czf "$OUTPUT" -C "$MODULE_DIR" .            
-            ls -lh "$OUTPUT"
-          
-            cp linux-7.3.3/arch/x86/boot/bzImage release-files/bzImage
-            cp linux-7.3.3/.config release-files/config            
+          set -Eeuo pipefail
 
-      - name: 创建发布并上传
+          KERNEL_DIR="$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}"
+          MODULES_STAGING="$GITHUB_WORKSPACE/modules-staging"
+
+          KERNEL_RELEASE=$(make -s -C "$KERNEL_DIR" ARCH=x86 kernelrelease)
+
+          echo "Kernel release: $KERNEL_RELEASE"
+          echo "Modules staging: $MODULES_STAGING"
+
+          make -C "$KERNEL_DIR" \
+            ARCH=x86 \
+            INSTALL_MOD_PATH="$MODULES_STAGING" \
+            modules_install
+
+          # 供后续步骤使用
+          echo "KERNEL_RELEASE=$KERNEL_RELEASE" >> "$GITHUB_ENV"
+          echo "MODULES_STAGING=$MODULES_STAGING" >> "$GITHUB_ENV"
+
+          echo "=== Installed modules ==="
+          ls -lah "$MODULES_STAGING/lib/modules/$KERNEL_RELEASE"
+
+      # 打包内核模块
+      - name: 打包内核模块
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules != false }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          MODULE_DIR="$MODULES_STAGING/lib/modules/$KERNEL_RELEASE"
+          RELEASE_DIR="$GITHUB_WORKSPACE/release-files"
+
+          mkdir -p "$RELEASE_DIR"
+
+          if [ ! -d "$MODULE_DIR" ]; then
+            echo "::error::Module directory not found: $MODULE_DIR"
+            exit 1
+          fi
+
+          echo "=== Module directory ==="
+          du -sh "$MODULE_DIR"
+
+          echo "=== Disk space ==="
+          df -h "$GITHUB_WORKSPACE"
+
+          # 保留 7.3.3 目录层级
+          tar -czf "$RELEASE_DIR/modules.tar.gz" \
+            -C "$MODULES_STAGING/lib/modules" \
+            "$KERNEL_RELEASE"
+
+          echo "=== Package result ==="
+          ls -lh "$RELEASE_DIR/modules.tar.gz"
+
+      # 准备 Release 文件
+      - name: 准备发布文件
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules != false }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          KERNEL_DIR="$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}"
+          RELEASE_DIR="$GITHUB_WORKSPACE/release-files"
+
+          mkdir -p "$RELEASE_DIR"
+
+          test -f "$KERNEL_DIR/arch/x86/boot/bzImage"
+          test -f "$KERNEL_DIR/.config"
+
+          cp "$KERNEL_DIR/arch/x86/boot/bzImage" \
+             "$RELEASE_DIR/bzImage"
+
+          cp "$KERNEL_DIR/.config" \
+             "$RELEASE_DIR/config"
+
+          echo "=== Release files ==="
+          ls -lh "$RELEASE_DIR"
+
+      # 检查发布文件
+      - name: 检查发布文件
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules != false }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          cd "$GITHUB_WORKSPACE/release-files"
+
+          test -s bzImage
+          test -s config
+          test -s modules.tar.gz
+
+          echo "=== SHA256 ==="
+          sha256sum bzImage config modules.tar.gz
+
+      # 创建 GitHub Release
+      - name: Create Release and upload
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules != false }}
         uses: ncipollo/release-action@v1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
           tag: music-linux-7.3.x
-          name: "音乐Linux ${{ env.KERNEL_VERSION }} x86_64 PREEMPT_RT (build ${{ github.run_number }})"
+          name: Linux ${{ env.KERNEL_VERSION }} x86_64 PREEMPT_RT Build
+          artifacts: "release-files/bzImage,release-files/config,release-files/modules.tar.gz"
+          artifactErrorsFailBuild: true
+          generateReleaseNotes: true
+          allowUpdates: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           body: |
             音乐 Linux ${{ env.KERNEL_VERSION }} x86_64 PREEMPT_RT 构建版本.
 
@@ -185,12 +209,3 @@ jobs:
             - `config`: 最终内核配置
             - `modules.tar.gz`: 已安装的内核模块
             - 内核版本：${{ env.KERNEL_VERSION }}
-
-            Source commit: `${{ github.sha }}`
-          artifacts: "release-files/bzImage,release-files/config,release-files/modules.tar.gz"
-          artifactErrorsFailBuild: true
-          allowUpdates: true
-          replacesArtifacts: true
-          makeLatest: true
-          draft: false
-          prerelease: false
