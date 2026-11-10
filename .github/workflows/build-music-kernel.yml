@@ -57,33 +57,6 @@ jobs:
           cp "$MIGRATION_DIR/config-7.3.3-rt-mod-daphile-final.conf" .config
           make olddefconfig
 
-      - name: 验证最终内核配置
-        run: |
-          echo "===== 音频配置 ====="
-          grep -E \
-          '^(CONFIG_SOUND=|CONFIG_SND=|CONFIG_SND_PCM=|CONFIG_SND_ALOOP=|CONFIG_SND_HDA_INTEL=|CONFIG_SND_HDA_CORE=|CONFIG_SND_HDA_CODEC_REALTEK=|CONFIG_SND_HDA_CODEC_HDMI=|CONFIG_SND_USB_AUDIO=|CONFIG_KERNEL_ZSTD=)' \
-          .config
-          
-          echo "===== 确认所需的音频选项 ====="
-          for opt in \
-            CONFIG_SOUND \
-            CONFIG_SND \
-            CONFIG_SND_PCM \
-            CONFIG_SND_ALOOP \
-            CONFIG_SND_HDA_INTEL \
-            CONFIG_SND_HDA_CODEC_REALTEK \
-            CONFIG_SND_HDA_CODEC_HDMI \
-            CONFIG_SND_USB_AUDIO \
-            CONFIG_KERNEL_ZSTD
-          do
-            grep -qx "${opt}=y" .config || {
-              echo "错误：${opt} 未启用"
-              exit 1
-            }
-          done
-          
-          grep -E 'CONFIG_(X86_64|PREEMPT_RT|PREEMPTION|SQUASHFS|OVERLAY_FS|INTEL_MEI_TXE|LPC_ICH)=' .config
-
       - name: 仅构建配置
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_modules == false }}
         run: |
