@@ -165,7 +165,7 @@ jobs:
           df -h "$GITHUB_WORKSPACE"
 
           # 保留 7.3.3 目录层级
-          tar -czf "$RELEASE_DIR/modules.tar.gz" \
+          tar --numeric-owner -zcf "$RELEASE_DIR/modules.tar.gz" \
             -C "$MODULES_STAGING/lib/modules" \
             "$KERNEL_RELEASE"
 

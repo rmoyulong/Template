@@ -19,7 +19,7 @@ env:
   ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-trixie-latest/rootfs.tar.gz
   # 默认用「模块化」内核（带真实 .ko）。若要用「全内建」内核，
   # 把下面两个 URL 末尾的 -%E6%A8%A1%E5%9D%97%E5%8C%96（-模块化）去掉即可。
-  MODULES_URL: https://github.com/rmoyulong/Template/releases/download/music-linux-7.3.x/bzImage
+  MODULES_URL: https://github.com/rmoyulong/Template/releases/download/music-linux-7.3.x/modules.tar.gz
   # 真实内核配置（由 build-kernel 产出，随 kernel-image release 一起发布）。
   # 放进 /boot/config-$KVER 后，initramfs 的 MODULES=dep 才能正确判断
   # "哪些驱动已经内建、根设备根本不需要模块"，从而把 initramfs 做到最小。
