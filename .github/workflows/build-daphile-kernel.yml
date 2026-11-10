@@ -89,25 +89,36 @@ jobs:
           export CC="ccache gcc"
           ccache -M 2G
           make ARCH=x86 -j"${BUILD_JOBS}" bzImage modules
+          
+      - name: 检查磁盘空间
+        run: |
+            echo "=== 磁盘空间 ==="
+            df -h
+            echo "=== Inode 使用情况 ==="
+            df -i
+            echo "=== 工作空间使用情况 ==="
+            du -sh "$GITHUB_WORKSPACE"/* 2>/dev/null | sort -h
 
+      - name: 清理构建文件
+        run: |
+          rm -rf "$HOME/.cache/ccache"
+          df -h
+    
       - name: 打包发布文件
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules != false }}
         run: |
-          set -euo pipefail
-          cd "linux-${KERNEL_VERSION}"
-          RELEASE_DIR="$GITHUB_WORKSPACE/release-files"
-          MODULES_STAGE="$GITHUB_WORKSPACE/modules-stage"
-          mkdir -p "$RELEASE_DIR" "$MODULES_STAGE"
-
-          install -m 0644 arch/x86/boot/bzImage "$RELEASE_DIR/bzImage"
-          install -m 0644 .config "$RELEASE_DIR/config"
-
-          make ARCH=x86 INSTALL_MOD_PATH="$MODULES_STAGE" modules_install
-          test -d "$MODULES_STAGE/lib/modules"
-          tar -czf "$RELEASE_DIR/modules.tar.gz" -C "$MODULES_STAGE" lib/modules
-
-          ls -lh "$RELEASE_DIR"
-          tar -tzf "$RELEASE_DIR/modules.tar.gz" | head -n 30
+            set -euo pipefail
+            
+            MODULE_DIR="$GITHUB_WORKSPACE/package/rootfs/lib/modules/7.3.3"
+            mkdir -p "$GITHUB_WORKSPACE/release-files"
+            
+            OUTPUT="$GITHUB_WORKSPACE/release-files/modules.tar.gz"            
+            test -d "$MODULE_DIR"            
+            tar -czf "$OUTPUT" -C "$MODULE_DIR" .            
+            ls -lh "$OUTPUT"
+          
+            cp linux-7.3.3/arch/x86/boot/bzImage release-files/bzImage
+            cp linux-7.3.3/.config release-files/config            
 
       - name: 创建发布并上传
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules != false }}
