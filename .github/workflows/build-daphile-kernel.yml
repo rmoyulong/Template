@@ -1,4 +1,4 @@
-name: 编译音乐Linux（PREEMPT_RT）-7.3.3
+name: 编译音乐Linux（PREEMPT_RT）-7.3.x
 
 on:
   workflow_dispatch:
@@ -125,10 +125,10 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag: music-linux-7.x
-          name: "音乐Linux 7.3.3 x86_64 PREEMPT_RT (build ${{ github.run_number }})"
+          tag: music-linux-7.3.x
+          name: "音乐Linux ${{ env.KERNEL_VERSION }} x86_64 PREEMPT_RT (build ${{ github.run_number }})"
           body: |
-            音乐 Linux 7.3.3 x86_64 PREEMPT_RT 构建版本.
+            音乐 Linux ${{ env.KERNEL_VERSION }} x86_64 PREEMPT_RT 构建版本.
 
             上传清单:
             - `bzImage`: Linux 内核映像
