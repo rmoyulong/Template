@@ -10,7 +10,7 @@ on:
         default: true
   push:
     paths:
-      - "patch/inferred-7.3.3.config"
+      - "kernel_config_migration_7.3.3/**"
       - ".github/workflows/build-daphile-kernel.yml"
 
 permissions:
@@ -29,7 +29,7 @@ jobs:
     env:
       KERNEL_VERSION: "7.3.3"
       KERNEL_URL: "https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.3.tar.xz"
-      MIGRATION_DIR: "patch"
+      MIGRATION_DIR: "kernel_config_migration_7.3.3"
       # GitHub-hosted Ubuntu runners have multiple cores; 2 is a conservative
       # setting for memory stability. Increase to 3 or 4 if the build is stable.
       BUILD_JOBS: "2"
@@ -43,7 +43,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .ccache
-          key: kernel-7.3.3-x86_64-${{ runner.os }}-${{ hashFiles('patch/inferred-7.3.3.config') }}
+          key: kernel-7.3.3-x86_64-${{ runner.os }}-${{ hashFiles('kernel_config_migration_7.3.3/inferred-7.3.3.config') }}
           restore-keys: |
             kernel-7.3.3-x86_64-${{ runner.os }}-
 
