@@ -82,16 +82,6 @@ jobs:
             }
           done
           
-          grep -qx 'CONFIG_X86_64=y' .config
-          grep -qx 'CONFIG_PREEMPT_RT=y' .config
-          cp .config .config.daphile-7.3.3
-          mkdir -p "$GITHUB_WORKSPACE/diagnostics"
-          cp .config "$GITHUB_WORKSPACE/diagnostics/config"
-          cp .config.daphile-7.3.3 "$GITHUB_WORKSPACE/diagnostics/config.daphile-7.3.3"
-          for f in config_migration_check.txt config_diff_from_x86_64_defconfig.txt; do
-            if [ -f "$f" ]; then cp "$f" "$GITHUB_WORKSPACE/diagnostics/"; fi
-          done
-          
           grep -E 'CONFIG_(X86_64|PREEMPT_RT|PREEMPTION|SQUASHFS|OVERLAY_FS|INTEL_MEI_TXE|LPC_ICH)=' .config
 
       - name: 仅构建配置
