@@ -196,10 +196,8 @@ jobs:
           tag: music-linux-7.3.x
           name: Linux ${{ env.KERNEL_VERSION }} x86_64 PREEMPT_RT Build
           artifacts: "release-files/bzImage,release-files/config,release-files/modules.tar.gz"
-          artifactErrorsFailBuild: true
-          generateReleaseNotes: true
-          replacesArtifacts: true
           allowUpdates: true
+          replacesArtifacts: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           body: |
