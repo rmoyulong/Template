@@ -210,24 +210,23 @@ jobs:
 
           echo "=== SHA256 ==="
           sha256sum bzImage config modules.tar.gz
-
+          
       # 创建 GitHub Release
       - name: 创建发布并上传
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules != false }}
         uses: ncipollo/release-action@v1
-        with:
-          tag: music-linux-7.3.x
-          name: Linux ${{ env.KERNEL_VERSION }} x86_64 PREEMPT_RT Build
-          artifacts: "release-files/bzImage,release-files/config,release-files/modules.tar.gz"
-          allowUpdates: true
-          replacesArtifacts: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          body: |
+        with:
+          tag: music-linux-7.3.x
+          name: music-linux-${{ env.KERNEL_VERSION }}
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: "release-files/bzImage,release-files/config,release-files/modules.tar.gz"
+          body: | 
             音乐 Linux ${{ env.KERNEL_VERSION }} x86_64 PREEMPT_RT 构建版本.
-
             上传清单:
             - `bzImage`: Linux 内核映像
             - `config`: 最终内核配置
             - `modules.tar.gz`: 已安装的内核模块
-            - 内核版本：${{ env.KERNEL_VERSION }}
+            - 内核版本：${{ env.KERNEL_VERSION }} 
