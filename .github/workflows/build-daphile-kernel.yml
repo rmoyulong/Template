@@ -68,7 +68,7 @@ jobs:
           
           echo "===== 音频配置 ====="
           grep -E \
-          '^(CONFIG_SOUND=|CONFIG_SND=|CONFIG_SND_PCM=|CONFIG_SND_ALOOP=|CONFIG_SND_HDA_INTEL=|CONFIG_SND_HDA_CORE=|CONFIG_SND_HDA_CODEC_REALTEK=|CONFIG_SND_HDA_CODEC_HDMI=|CONFIG_SND_USB_AUDIO=)' \
+          '^(CONFIG_SOUND=|CONFIG_SND=|CONFIG_SND_PCM=|CONFIG_SND_ALOOP=|CONFIG_SND_HDA_INTEL=|CONFIG_SND_HDA_CORE=|CONFIG_SND_HDA_CODEC_REALTEK=|CONFIG_SND_HDA_CODEC_HDMI=|CONFIG_SND_USB_AUDIO=|CONFIG_KERNEL_ZSTD=)' \
           .config
           
           echo "===== 确认所需的音频选项 ====="
@@ -80,7 +80,8 @@ jobs:
             CONFIG_SND_HDA_INTEL \
             CONFIG_SND_HDA_CODEC_REALTEK \
             CONFIG_SND_HDA_CODEC_HDMI \
-            CONFIG_SND_USB_AUDIO
+            CONFIG_SND_USB_AUDIO \
+            CONFIG_KERNEL_ZSTD
           do
             grep -qx "${opt}=y" .config || {
               echo "错误：${opt} 未启用"
