@@ -1,155 +1,135 @@
-name: 编译音乐Linux(x86_64 PREEMPT_RT)-7.3.3
+name: 编译音乐Linux（PREEMPT_RT）-7.3.3
 
 on:
   workflow_dispatch:
     inputs:
       build_modules:
-        description: "Compile and package kernel modules (takes longer)"
+        description: "构建 bzImage 和内核模块（false = 仅进行配置检查）"
         required: true
         type: boolean
         default: true
   push:
     paths:
-      - "kernel_config_migration_7.3.3/**"
       - ".github/workflows/build-daphile-kernel.yml"
+      - "kernel_config_migration_7.3.3/**"
 
 permissions:
-  contents: read
-
-concurrency:
-  group: daphile-linux-7.3.3-${{ github.ref }}
-  cancel-in-progress: true
+  contents: write
 
 jobs:
   build:
-    name: 在 GitHub 托管的运行器上进行配置与构建
     runs-on: ubuntu-24.04
     timeout-minutes: 360
-
     env:
+      ARCH: x86
+      BUILD_JOBS: 2
       KERNEL_VERSION: "7.3.3"
-      KERNEL_URL: "https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.3.tar.xz"
-      MIGRATION_DIR: "kernel_config_migration_7.3.3"
-      # GitHub-hosted Ubuntu runners have multiple cores; 2 is a conservative
-      # setting for memory stability. Increase to 3 or 4 if the build is stable.
-      BUILD_JOBS: "2"
-      CCACHE_DIR: ${{ github.workspace }}/.ccache
 
     steps:
-      - name: 查看配置和迁移脚本
+      - name: 检出仓库
         uses: actions/checkout@v4
-
-      - name: 缓存编译器对象
-        uses: actions/cache@v4
-        with:
-          path: .ccache
-          key: kernel-7.3.3-x86_64-${{ runner.os }}-${{ hashFiles('kernel_config_migration_7.3.3/inferred-7.3.3.config') }}
-          restore-keys: |
-            kernel-7.3.3-x86_64-${{ runner.os }}-
 
       - name: 安装构建依赖项
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            bc bison build-essential ccache flex git \
-            libelf-dev libssl-dev pahole perl python3 rsync \
-            tar xz-utils
+          sudo apt-get install -y bc bison build-essential ccache flex git \
+            libelf-dev libssl-dev pahole perl python3 rsync tar xz-utils
 
-      - name: 下载并解压 Linux 源码
+      - name: 配置 ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: linux-7.3.3-x86_64-${{ runner.os }}-${{ github.ref }}
+          restore-keys: |
+            linux-7.3.3-x86_64-${{ runner.os }}-
+
+      - name: 下载 Linux 源码
         run: |
-          set -euxo pipefail
-          curl --fail --location --retry 5 --retry-delay 3 \
-            "$KERNEL_URL" -o linux-${KERNEL_VERSION}.tar.xz
+          curl -fL --retry 3 \
+            https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${KERNEL_VERSION}.tar.xz \
+            -o linux-${KERNEL_VERSION}.tar.xz
           tar -xf linux-${KERNEL_VERSION}.tar.xz
-          test -f "linux-${KERNEL_VERSION}/Makefile"
-          grep -q '^VERSION = 7$' "linux-${KERNEL_VERSION}/Makefile"
-          grep -q '^PATCHLEVEL = 3$' "linux-${KERNEL_VERSION}/Makefile"
-          grep -q '^SUBLEVEL = 3$' "linux-${KERNEL_VERSION}/Makefile"
 
-      - name: 应用 x86_64 音乐 PREEMPT_RT 配置
+      - name: 执行 Daphile 配置迁移
         run: |
-          set -euxo pipefail
-          test -f "$MIGRATION_DIR/inferred-7.3.3.config"
+          MIGRATION_DIR="$GITHUB_WORKSPACE/kernel_config_migration_7.3.3"
           test -f "$MIGRATION_DIR/apply_migration.sh"
-          bash "$MIGRATION_DIR/apply_migration.sh" "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}"
+          cd "linux-${KERNEL_VERSION}"
+          bash "$MIGRATION_DIR/apply_migration.sh"
 
-          cd "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}"
+      - name: 验证最终内核配置
+        run: |
+          cd "linux-${KERNEL_VERSION}"
+          test -f .config.daphile-7.3.3
+          grep -qx 'CONFIG_X86_64=y' .config.daphile-7.3.3
+          grep -qx 'CONFIG_PREEMPT_RT=y' .config.daphile-7.3.3
+          cp .config.daphile-7.3.3 .config
+          make ARCH=x86 olddefconfig
           grep -qx 'CONFIG_X86_64=y' .config
-          if ! grep -qx 'CONFIG_PREEMPT_RT=y' .config; then
-            echo "::error::CONFIG_PREEMPT_RT=y did not survive Kconfig resolution."
-            echo "Inspect config_migration_check.txt and the target kernel Kconfig."
-            exit 1
-          fi
-          cp .config "$GITHUB_WORKSPACE/daphile-7.3.3-x86_64.config"
+          grep -qx 'CONFIG_PREEMPT_RT=y' .config
+          cp .config .config.daphile-7.3.3
+          mkdir -p "$GITHUB_WORKSPACE/diagnostics"
+          cp .config "$GITHUB_WORKSPACE/diagnostics/config"
+          cp .config.daphile-7.3.3 "$GITHUB_WORKSPACE/diagnostics/config.daphile-7.3.3"
+          for f in config_migration_check.txt config_diff_from_x86_64_defconfig.txt; do
+            if [ -f "$f" ]; then cp "$f" "$GITHUB_WORKSPACE/diagnostics/"; fi
+          done
+
+      - name: 仅构建配置
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_modules == false }}
+        run: |
+          mkdir -p config-only
+          cp "linux-${KERNEL_VERSION}/.config" config-only/config
+          tar -czf config-only.tar.gz -C config-only config
 
       - name: 构建内核镜像及模块
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules != false }}
         run: |
-          set -euxo pipefail
-          cd "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}"
+          cd "linux-${KERNEL_VERSION}"
           export CC="ccache gcc"
-          export HOSTCC="ccache gcc"
+          ccache -M 2G
           make ARCH=x86 -j"${BUILD_JOBS}" bzImage modules
-          mkdir -p "$GITHUB_WORKSPACE/package/boot"
-          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/package/boot/"
-          cp System.map "$GITHUB_WORKSPACE/package/boot/"
-          cp .config "$GITHUB_WORKSPACE/package/boot/config"
-          make ARCH=x86 INSTALL_MOD_PATH="$GITHUB_WORKSPACE/package/rootfs" \
-            modules_install
-          tar -C "$GITHUB_WORKSPACE/package" -cJf \
-            "$GITHUB_WORKSPACE/daphile-linux-7.3.3-x86_64-preempt-rt.tar.xz" \
-            boot rootfs
 
-      - name: 仅针对配置的验证
-        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.build_modules }}
+      - name: 打包发布文件
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules != false }}
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/package"
-          cp "$GITHUB_WORKSPACE/daphile-7.3.3-x86_64.config" \
-            "$GITHUB_WORKSPACE/package/"
-          cp "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}/config_migration_check.txt" \
-            "$GITHUB_WORKSPACE/package/"
-          tar -C "$GITHUB_WORKSPACE/package" -cJf \
-            "$GITHUB_WORKSPACE/daphile-linux-7.3.3-config-only.tar.xz" .
+          set -euo pipefail
+          cd "linux-${KERNEL_VERSION}"
+          RELEASE_DIR="$GITHUB_WORKSPACE/release-files"
+          MODULES_STAGE="$GITHUB_WORKSPACE/modules-stage"
+          mkdir -p "$RELEASE_DIR" "$MODULES_STAGE"
 
-      - name: 收集构建诊断信息
-        if: always()
-        run: |
-          mkdir -p "$GITHUB_WORKSPACE/diagnostics"
-          if [ -d "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}" ]; then
-            cp "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}/config_migration_check.txt" \
-              "$GITHUB_WORKSPACE/diagnostics/" 2>/dev/null || true
-            cp "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}/config_diff_from_x86_64_defconfig.txt" \
-              "$GITHUB_WORKSPACE/diagnostics/" 2>/dev/null || true
-            cp "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}/.config.daphile-7.3.3" \
-              "$GITHUB_WORKSPACE/diagnostics/" 2>/dev/null || true
-          fi
-          ccache -s || true
+          install -m 0644 arch/x86/boot/bzImage "$RELEASE_DIR/bzImage"
+          install -m 0644 .config "$RELEASE_DIR/config"
 
-      - name: 上传内核软件包
-        if: ${{ success() && (github.event_name != 'workflow_dispatch' || inputs.build_modules) }}
-        uses: actions/upload-artifact@v4
+          make ARCH=x86 INSTALL_MOD_PATH="$MODULES_STAGE" modules_install
+          test -d "$MODULES_STAGE/lib/modules"
+          tar -czf "$RELEASE_DIR/modules.tar.gz" -C "$MODULES_STAGE" lib/modules
+
+          ls -lh "$RELEASE_DIR"
+          tar -tzf "$RELEASE_DIR/modules.tar.gz" | head -n 30
+
+      - name: 创建发布并上传
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules != false }}
+        uses: ncipollo/release-action@v1
         with:
-          name: daphile-linux-7.3.3-x86_64-preempt-rt
-          path: |
-            daphile-linux-7.3.3-x86_64-preempt-rt.tar.xz
-            daphile-7.3.3-x86_64.config
-          if-no-files-found: error
-          retention-days: 14
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: music-linux-7.x
+          name: "音乐Linux 7.3.3 x86_64 PREEMPT_RT (build ${{ github.run_number }})"
+          body: |
+            音乐 Linux 7.3.3 x86_64 PREEMPT_RT 构建版本.
 
-      - name: 上传仅含配置的程序包
-        if: ${{ success() && github.event_name == 'workflow_dispatch' && !inputs.build_modules }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: daphile-linux-7.3.3-config-only
-          path: daphile-linux-7.3.3-config-only.tar.xz
-          if-no-files-found: error
-          retention-days: 14
+            上传清单:
+            - `bzImage`: Linux 内核映像
+            - `config`: 最终内核配置
+            - `modules.tar.gz`: 已安装的内核模块
+            - 内核版本：${{ env.KERNEL_VERSION }}
 
-      - name: 上传诊断信息
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: daphile-linux-7.3.3-diagnostics
-          path: diagnostics/
-          if-no-files-found: ignore
-          retention-days: 14
+            Source commit: `${{ github.sha }}`
+          artifacts: "release-files/bzImage,release-files/config,release-files/modules.tar.gz"
+          artifactErrorsFailBuild: true
+          allowUpdates: true
+          replacesArtifacts: true
+          makeLatest: true
+          draft: false
+          prerelease: false
