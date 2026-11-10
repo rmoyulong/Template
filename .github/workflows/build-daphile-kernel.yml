@@ -1,0 +1,155 @@
+name: Build Daphile Linux 7.3.3 (x86_64 PREEMPT_RT)
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_modules:
+        description: "Compile and package kernel modules (takes longer)"
+        required: true
+        type: boolean
+        default: true
+  push:
+    paths:
+      - "patch/inferred-7.3.3.config"
+      - ".github/workflows/build-daphile-kernel.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daphile-linux-7.3.3-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Configure and build on GitHub-hosted runner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    env:
+      KERNEL_VERSION: "7.3.3"
+      KERNEL_URL: "https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.3.tar.xz"
+      MIGRATION_DIR: "patch"
+      # GitHub-hosted Ubuntu runners have multiple cores; 2 is a conservative
+      # setting for memory stability. Increase to 3 or 4 if the build is stable.
+      BUILD_JOBS: "2"
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+
+    steps:
+      - name: Check out configuration and migration script
+        uses: actions/checkout@v4
+
+      - name: Cache compiler objects
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: kernel-7.3.3-x86_64-${{ runner.os }}-${{ hashFiles('patch/inferred-7.3.3.config') }}
+          restore-keys: |
+            kernel-7.3.3-x86_64-${{ runner.os }}-
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache flex git \
+            libelf-dev libssl-dev pahole perl python3 rsync \
+            tar xz-utils
+
+      - name: Download and extract Linux source
+        run: |
+          set -euxo pipefail
+          curl --fail --location --retry 5 --retry-delay 3 \
+            "$KERNEL_URL" -o linux-${KERNEL_VERSION}.tar.xz
+          tar -xf linux-${KERNEL_VERSION}.tar.xz
+          test -f "linux-${KERNEL_VERSION}/Makefile"
+          grep -q '^VERSION = 7$' "linux-${KERNEL_VERSION}/Makefile"
+          grep -q '^PATCHLEVEL = 3$' "linux-${KERNEL_VERSION}/Makefile"
+          grep -q '^SUBLEVEL = 3$' "linux-${KERNEL_VERSION}/Makefile"
+
+      - name: Apply x86_64 Daphile PREEMPT_RT configuration
+        run: |
+          set -euxo pipefail
+          test -f "$MIGRATION_DIR/inferred-7.3.3.config"
+          test -f "$MIGRATION_DIR/apply_migration.sh"
+          bash "$MIGRATION_DIR/apply_migration.sh" "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}"
+
+          cd "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}"
+          grep -qx 'CONFIG_X86_64=y' .config
+          if ! grep -qx 'CONFIG_PREEMPT_RT=y' .config; then
+            echo "::error::CONFIG_PREEMPT_RT=y did not survive Kconfig resolution."
+            echo "Inspect config_migration_check.txt and the target kernel Kconfig."
+            exit 1
+          fi
+          cp .config "$GITHUB_WORKSPACE/daphile-7.3.3-x86_64.config"
+
+      - name: Build kernel image and modules
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules }}
+        run: |
+          set -euxo pipefail
+          cd "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}"
+          export CC="ccache gcc"
+          export HOSTCC="ccache gcc"
+          make ARCH=x86 -j"${BUILD_JOBS}" bzImage modules
+          mkdir -p "$GITHUB_WORKSPACE/package/boot"
+          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/package/boot/"
+          cp System.map "$GITHUB_WORKSPACE/package/boot/"
+          cp .config "$GITHUB_WORKSPACE/package/boot/config"
+          make ARCH=x86 INSTALL_MOD_PATH="$GITHUB_WORKSPACE/package/rootfs" \
+            modules_install
+          tar -C "$GITHUB_WORKSPACE/package" -cJf \
+            "$GITHUB_WORKSPACE/daphile-linux-7.3.3-x86_64-preempt-rt.tar.xz" \
+            boot rootfs
+
+      - name: Configuration-only validation
+        if: ${{ github.event_name == 'workflow_dispatch' && !inputs.build_modules }}
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/package"
+          cp "$GITHUB_WORKSPACE/daphile-7.3.3-x86_64.config" \
+            "$GITHUB_WORKSPACE/package/"
+          cp "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}/config_migration_check.txt" \
+            "$GITHUB_WORKSPACE/package/"
+          tar -C "$GITHUB_WORKSPACE/package" -cJf \
+            "$GITHUB_WORKSPACE/daphile-linux-7.3.3-config-only.tar.xz" .
+
+      - name: Collect build diagnostics
+        if: always()
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/diagnostics"
+          if [ -d "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}" ]; then
+            cp "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}/config_migration_check.txt" \
+              "$GITHUB_WORKSPACE/diagnostics/" 2>/dev/null || true
+            cp "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}/config_diff_from_x86_64_defconfig.txt" \
+              "$GITHUB_WORKSPACE/diagnostics/" 2>/dev/null || true
+            cp "$GITHUB_WORKSPACE/linux-${KERNEL_VERSION}/.config.daphile-7.3.3" \
+              "$GITHUB_WORKSPACE/diagnostics/" 2>/dev/null || true
+          fi
+          ccache -s || true
+
+      - name: Upload kernel package
+        if: ${{ success() && (github.event_name != 'workflow_dispatch' || inputs.build_modules) }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: daphile-linux-7.3.3-x86_64-preempt-rt
+          path: |
+            daphile-linux-7.3.3-x86_64-preempt-rt.tar.xz
+            daphile-7.3.3-x86_64.config
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload configuration-only package
+        if: ${{ success() && github.event_name == 'workflow_dispatch' && !inputs.build_modules }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: daphile-linux-7.3.3-config-only
+          path: daphile-linux-7.3.3-config-only.tar.xz
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daphile-linux-7.3.3-diagnostics
+          path: diagnostics/
+          if-no-files-found: ignore
+          retention-days: 14
