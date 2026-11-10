@@ -189,7 +189,7 @@ jobs:
           sha256sum bzImage config modules.tar.gz
 
       # 创建 GitHub Release
-      - name: Create Release and upload
+      - name: 创建发布并上传
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_modules != false }}
         uses: ncipollo/release-action@v1
         with:
@@ -198,6 +198,7 @@ jobs:
           artifacts: "release-files/bzImage,release-files/config,release-files/modules.tar.gz"
           artifactErrorsFailBuild: true
           generateReleaseNotes: true
+          replacesArtifacts: true
           allowUpdates: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
