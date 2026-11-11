@@ -320,6 +320,35 @@ jobs:
 
           grep -E '^(CONFIG_LOCALVERSION=|CONFIG_LOCALVERSION_AUTO=|# CONFIG_LOCALVERSION_AUTO)' .config || true
 
+          echo
+          echo "===== LOCALVERSION BUILD DIAGNOSTICS ====="
+
+          echo "--- .config ---"
+          grep -E '^CONFIG_LOCALVERSION=|^CONFIG_LOCALVERSION_AUTO=' .config || true
+
+          echo "--- auto.conf ---"
+          if test -f include/config/auto.conf; then
+              grep -E '^CONFIG_LOCALVERSION=' include/config/auto.conf || true
+          else
+              echo "include/config/auto.conf missing"
+          fi
+
+          echo "--- kernel.release ---"
+          if test -f include/config/kernel.release; then
+              cat include/config/kernel.release
+          else
+              echo "include/config/kernel.release missing"
+          fi
+
+          echo "--- environment ---"
+          env | grep -E '^(LOCALVERSION|KERNELRELEASE)=' || true
+
+          echo "--- make kernelrelease ---"
+          make -s kernelrelease
+
+          echo "--- make variable ---"
+          make -pn 2>/dev/null | grep -m 3 -E '^LOCALVERSION[[:space:]]*[:?+]?=' || true
+
           # ------------------------------------------------
           # IMPORTANT:
           # Do NOT use make LOCALVERSION=-daphile-rebuild.
