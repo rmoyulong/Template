@@ -9,7 +9,7 @@ on:
         default: false
 
 env:
-  KERNEL_VERSION: 7.3.3
+  KERNEL_VERSION: 7.3.4
 
 jobs:
   build_kernel:
