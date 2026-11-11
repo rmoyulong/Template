@@ -10,7 +10,7 @@ on:
         default: true
   push:
     paths:
-      - ".github/workflows/build-daphile-kernel.yml"
+      - ".github/workflows/build-music-kernel.yml"
       - "kernel_config_migration_7.3.x/**"
 
 permissions:
