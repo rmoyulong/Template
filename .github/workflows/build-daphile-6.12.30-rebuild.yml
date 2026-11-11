@@ -299,16 +299,31 @@ jobs:
           # --------------------------------------------------
 
           echo
-          echo "===== KERNEL RELEASE CHECK ====="
+          echo "===== LOCALVERSION DIAGNOSTICS ====="
 
-          KREL=$(make -s kernelrelease)
+          echo "--- .config values ---"
+          grep -E '^(CONFIG_LOCALVERSION=|CONFIG_LOCALVERSION_AUTO=|# CONFIG_LOCALVERSION_AUTO)' .config || true
+
+          echo
+          echo "--- Environment ---"
+          env | grep -E '^(LOCALVERSION|KERNELRELEASE|KBUILD_BUILD_VERSION)=' || true
+
+          echo
+          echo "--- Kernel release without override ---"
+          make -s kernelrelease
+
+          echo
+          echo "--- Kernel release with explicit override ---"
+          KREL=$(make -s LOCALVERSION=-daphile-rebuild kernelrelease)
+
           echo "Kernel release: $KREL"
 
           if [[ "$KREL" != "6.12.30-daphile-rebuild" ]]; then
-            echo "::error::Unexpected kernel release: $KREL"
-            echo "Expected: 6.12.30-daphile-rebuild"
+            echo "::error::Kernel release verification failed"
             exit 1
           fi
+
+          echo "Kernel release verification successful"
 
           # --------------------------------------------------
           # 10. Verify important configuration values
@@ -394,7 +409,7 @@ jobs:
           echo "Building Linux 6.12.30"
           echo "=================================="
 
-          make -j"$(nproc)" bzImage modules
+          make LOCALVERSION=-daphile-rebuild -j"$(nproc)" bzImage modules
 
           test -s arch/x86/boot/bzImage
 
@@ -413,7 +428,7 @@ jobs:
 
           STAGE="$GITHUB_WORKSPACE/modules-staging"
 
-          make INSTALL_MOD_PATH="$STAGE" modules_install
+          make LOCALVERSION=-daphile-rebuild INSTALL_MOD_PATH="$STAGE" modules_install
 
           MODDIR="$STAGE/lib/modules/$KREL"
 
