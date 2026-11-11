@@ -43,12 +43,23 @@ jobs:
           restore-keys: |
             linux-${KERNEL_VERSION}-x86_64-${{ runner.os }}-
 
-      - name: 下载 Linux 源码
+      - name: 下载内核源码
         run: |
-          curl -fL --retry 3 \
-            https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-${KERNEL_VERSION}.tar.xz \
-            -o linux-${KERNEL_VERSION}.tar.xz
-          tar -xf linux-${KERNEL_VERSION}.tar.xz
+          set -euo pipefail
+          # 主版本号自动推导，绝不能把 v6.x / v7.x 写死：
+          # 7.x 内核位于 v7.x/ 目录下，写死 v6.x 会直接 404
+          # （这正是"7.4 下载不下来"的根因）。
+          MAJOR="${KERNEL_VERSION%%.*}"
+          BASE="https://cdn.kernel.org/pub/linux/kernel/v${MAJOR}.x"
+          # 候选版（-rc）放在 testing/ 子目录，正式版在上一层
+          case "$KERNEL_VERSION" in
+            *-rc*) BASE="$BASE/testing" ;;
+          esac
+          URL="$BASE/linux-${KERNEL_VERSION}.tar.xz"
+          echo "下载地址: $URL"
+          wget -q "$URL"
+          tar -xJf "linux-${KERNEL_VERSION}.tar.xz"
+          ls -d "linux-${KERNEL_VERSION}"
 
       - name: 加载最终内核配置
         run: |
