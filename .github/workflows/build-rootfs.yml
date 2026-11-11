@@ -56,6 +56,7 @@ jobs:
           
           # 3. 验证密钥是否已就位（现在应该能通过检查了）
           gpg --show-keys --with-fingerprint /usr/share/keyrings/debian-archive-keyring.gpg 2>/dev/null | grep -q "F8D2 585B 8783 D481"
+          #版本号会变：debian-archive-keyring_2023.3+deb12u2_all.deb 里的版本号会随 Debian 更新。如果哪天 wget 404 了，去镜像的 pool/main/d/debian-archive-keyring/ 目录下看一眼当前文件名即可，或者用 apt-get download debian-archive-keyring 让 apt 自己解析
 
       - name: Debootstrap base system
         run: |
