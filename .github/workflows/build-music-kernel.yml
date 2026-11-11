@@ -33,9 +33,9 @@ jobs:
         run: |
           set -euo pipefail
           
-            echo "===== APT UPDATE WITH RETRIES ====="
+            echo "===== 带重试机制的 APT 更新 ====="
             for attempt in 1 2 3 4 5; do
-              echo "APT update attempt: $attempt"
+              echo "尝试执行 APT 更新: $attempt"
               
               if sudo apt-get \
                 -o Acquire::Retries=3 \
@@ -46,14 +46,14 @@ jobs:
               fi
               
               if [[ "$attempt" -eq 5 ]]; then
-                echo "::error::APT update failed after 5 attempts"
+                echo "::error::APT 更新在尝试 5 次后失败"
                 exit 1
               fi
               
               sleep 20
             done
             
-            echo "===== INSTALL BUILD DEPENDENCIES ====="
+            echo "===== 安装构建依赖项S ====="
             sudo apt-get install -y \
               -o Acquire::Retries=3 \
               -o Acquire::http::Timeout=30 \
