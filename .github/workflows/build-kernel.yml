@@ -50,7 +50,7 @@ jobs:
             cat /etc/apt/sources.list.d/ubuntu.sources
             # 绕过 GitHub Runner 默认的 Azure mirror list
             sudo sed -i -E \
-              's|mirror\+file:/etc/apt/apt-mirrors\.txt|https://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g; s|https?://azure\.archive\.ubuntu\.com/ubuntu/?|https://mirrors.tuna.tsinghua.edu.cn/ubuntu/|g' \
+              's|mirror\+file:/etc/apt/apt-mirrors\.txt|https://mirrors.aliyun.com/ubuntu/|g; s|https?://azure\.archive\.ubuntu\.com/ubuntu/?|https://mirrors.aliyun.com/ubuntu/|g' \
               /etc/apt/sources.list.d/ubuntu.sources
             echo "===== UPDATED APT SOURCES ====="
             cat /etc/apt/sources.list.d/ubuntu.sources
