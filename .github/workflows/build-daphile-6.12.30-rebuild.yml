@@ -525,7 +525,95 @@ jobs:
       - name: Install kernel modules
         working-directory: linux-6.12.30
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          
+            echo "===== DISK SPACE BEFORE ====="
+            df -h
+            df -i
+            du -sh "$GITHUB_WORKSPACE/linux-6.12.30" 2>/dev/null || true
+            du -sh "$GITHUB_WORKSPACE/modules-staging" 2>/dev/null || true          
+
+            KREL="$(make -s kernelrelease)"
+
+            if [[ "$KREL" != "$KERNEL_RELEASE" ]]; then
+              echo "::error::Unexpected kernel release: $KREL"
+              exit 1
+            fi
+
+            STAGE="$GITHUB_WORKSPACE/modules-staging"
+            MODDIR="$STAGE/lib/modules/$KREL"
+
+            echo "===== INSTALL KERNEL MODULES ====="
+            echo "Kernel release: $KREL"
+            echo "Install path: $STAGE"
+
+            make INSTALL_MOD_PATH="$STAGE" modules_install
+
+            echo
+            echo "===== VERIFY MODULE DIRECTORY ====="
+
+            if [[ ! -d "$MODDIR" ]]; then
+              echo "::error::Module directory missing: $MODDIR"
+              exit 1
+            fi
+
+            rm -f "$MODDIR/build" "$MODDIR/source"
+
+            echo
+            echo "===== CHECK MODULE FILES ====="
+
+            find "$MODDIR" -type f \
+              \( -name '*.ko' -o -name '*.ko.gz' \
+                 -o -name '*.ko.xz' -o -name '*.ko.zst' \) \
+              | wc -l
+
+            echo
+            echo "===== REGENERATE MODULE DEPENDENCIES ====="
+
+            echo "===== DISK SPACE BEFORE DEPMOD ====="
+            df -h "$GITHUB_WORKSPACE"
+            df -i "$GITHUB_WORKSPACE"
+
+
+            set +e
+            depmod -b "$STAGE" "$KREL"
+            DEPMOD_RC=$?
+            set -e
+
+            echo "depmod exit code: $DEPMOD_RC"
+
+            if [[ "$DEPMOD_RC" -ne 0 ]]; then
+              echo "::error::depmod failed with exit code $DEPMOD_RC"
+              exit "$DEPMOD_RC"
+            fi
+
+            echo
+            echo "===== VERIFY MODULE METADATA ====="
+
+            for FILE in modules.dep modules.builtin modules.order; do
+              if [[ -s "$MODDIR/$FILE" ]]; then
+                echo "OK: $FILE ($(wc -l < "$MODDIR/$FILE") lines)"
+              elif [[ -f "$MODDIR/$FILE" ]]; then
+                echo "::warning::$FILE exists but is empty"
+              else
+                echo "::warning::$FILE is missing"
+              fi
+            done
+
+            if [[ ! -s "$MODDIR/modules.dep" ]]; then
+              echo "::error::modules.dep missing or empty"
+              exit 1
+            fi
+
+            if [[ ! -f "$MODDIR/modules.builtin" ]]; then
+              echo "::error::modules.builtin missing"
+              exit 1
+            fi
+
+            echo
+            echo "===== MODULE INSTALLATION SUCCESSFUL ====="
+            du -sh "$MODDIR"
+            ls -lh "$MODDIR"/modules.*
 
           # Read the actual release from the generated config.
 
