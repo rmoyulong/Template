@@ -297,6 +297,38 @@ jobs:
 
           make olddefconfig
 
+            echo
+            echo "===== SYNCHRONIZE KERNEL CONFIG ====="
+
+            make syncconfig
+
+            echo
+            echo "===== VERIFY GENERATED CONFIG ====="
+
+            test -f include/config/auto.conf
+
+            echo "CONFIG_LOCALVERSION in auto.conf:"
+            grep -n '^CONFIG_LOCALVERSION=' include/config/auto.conf || true
+
+            echo
+            echo "===== GENERATE KERNEL RELEASE ====="
+
+            make -s kernelrelease
+
+            test -s include/config/kernel.release
+
+            KREL="$(cat include/config/kernel.release)"
+
+            echo "Generated kernel.release: $KREL"
+
+            if [[ "$KREL" != "$KERNEL_RELEASE" ]]; then
+                echo "::error::Generated kernel.release mismatch: $KREL"
+                exit 1
+            fi
+
+            echo "Kernel release synchronization successful"
+          
+
           # Verify kernel compression.
 
           echo
