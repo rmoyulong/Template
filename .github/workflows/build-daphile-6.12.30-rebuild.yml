@@ -566,141 +566,144 @@ jobs:
       # 7. Install modules
       # --------------------------------------------------
 
-      - name: Install kernel modules
+      - name: Install kernel modules and verify depmod
         working-directory: linux-6.12.30
+        shell: bash
         run: |
           set -Eeuo pipefail
 
-            KREL="$(make -s kernelrelease)"
+          KREL="$(make -s kernelrelease)"
+          STAGE="$GITHUB_WORKSPACE/modules-staging"
+          MODDIR="$STAGE/lib/modules/$KREL"
 
-            if [[ "$KREL" != "$KERNEL_RELEASE" ]]; then
-              echo "::error::Unexpected kernel release: $KREL"
-              exit 1
-            fi
-
-            STAGE="$GITHUB_WORKSPACE/modules-staging"
-            MODDIR="$STAGE/lib/modules/$KREL"
-
-            echo "===== DISK SPACE BEFORE INSTALL ====="
-            df -h "$GITHUB_WORKSPACE"
-            df -i "$GITHUB_WORKSPACE"
-
-            echo
-            echo "===== RUN MODULES_INSTALL ====="
-
-            set +e
-            make INSTALL_MOD_PATH="$STAGE" modules_install
-            MAKE_RC=$?
-            set -e
-
-            echo "modules_install exit code: $MAKE_RC"
-
-            if [[ "$MAKE_RC" -ne 0 ]]; then
-              echo "::error::make modules_install failed"
-              df -h "$GITHUB_WORKSPACE"
-              exit "$MAKE_RC"
-            fi
-
-            echo
-            echo "===== VERIFY MODULE DIRECTORY ====="
-
-            if [[ ! -d "$MODDIR" ]]; then
-              echo "::error::Module directory missing"
-              exit 1
-            fi
-
-            rm -f "$MODDIR/build" "$MODDIR/source"
-
-            echo "Module directory exists"
-
-            echo
-            echo "===== DISK SPACE AFTER INSTALL ====="
-            df -h "$GITHUB_WORKSPACE"
-
-            echo
-            echo "===== CHECK GENERATED METADATA ====="
-
-            for FILE in modules.dep modules.builtin modules.order; do
-              if [[ -f "$MODDIR/$FILE" ]]; then
-                ls -lh "$MODDIR/$FILE"
-              else
-                echo "MISSING: $FILE"
-              fi
-            done
-
-            echo
-            echo "===== RUN MANUAL DEPMOD ====="
-
-            set +e
-            depmod -b "$STAGE" "$KREL"
-            DEPMOD_RC=$?
-            set -e
-
-            echo "Manual depmod exit code: $DEPMOD_RC"
-
-            if [[ "$DEPMOD_RC" -ne 0 ]]; then
-              echo "::error::Manual depmod failed"
-              exit "$DEPMOD_RC"
-            fi
-
-            echo
-            echo "===== VERIFY MODULE DEPENDENCIES ====="
-
-            if [[ -s "$MODDIR/modules.dep" ]]; then
-              echo "modules.dep OK"
-            else
-              echo "::error::modules.dep missing or empty"
-              exit 1
-            fi
-
-            if [[ -f "$MODDIR/modules.builtin" ]]; then
-              echo "modules.builtin exists"
-            else
-              echo "::error::modules.builtin missing"
-              exit 1
-            fi
-
-            echo
-            echo "===== MODULE INSTALLATION SUCCESSFUL ====="
-
-            du -sh "$MODDIR"
-            ls -lh "$MODDIR"/modules.*
-
-
+          echo "===== KERNEL RELEASE CHECK ====="
+          echo "Expected: $KERNEL_RELEASE"
+          echo "Actual:   $KREL"
           if [[ "$KREL" != "$KERNEL_RELEASE" ]]; then
             echo "::error::Unexpected kernel release: $KREL"
             exit 1
           fi
 
-          STAGE="$GITHUB_WORKSPACE/modules-staging"
+          echo
+          echo "===== DISK SPACE BEFORE INSTALL ====="
+          df -h "$GITHUB_WORKSPACE"
+          df -i "$GITHUB_WORKSPACE"
 
-          # Install modules without overriding LOCALVERSION.
-
-          make \
-            INSTALL_MOD_PATH="$STAGE" \
-            modules_install
-
-          MODDIR="$STAGE/lib/modules/$KREL"
-
-          test -d "$MODDIR"
-
-          # Remove build-time source links if present.
-
-          rm -f "$MODDIR/build" "$MODDIR/source"
-
-          # Regenerate module dependency metadata.
-
-          depmod -b "$STAGE" "$KREL"
-
-          test -s "$MODDIR/modules.dep"
-          test -s "$MODDIR/modules.builtin"
-
-          echo "Installed module directory:"
-          du -sh "$MODDIR"
+          # Start from a clean staging directory. This prevents stale module
+          # files or metadata from a previous attempt from hiding install errors.
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
 
           echo
-          echo "Module metadata:"
+          echo "===== RUN MODULES_INSTALL (ONCE) ====="
+          make INSTALL_MOD_PATH="$STAGE" modules_install
+
+          if [[ ! -d "$MODDIR" ]]; then
+            echo "::error::Module directory missing: $MODDIR"
+            find "$STAGE" -maxdepth 5 -type d -print || true
+            exit 1
+          fi
+
+          # Remove build-time links; they must not point back into the runner.
+          rm -f "$MODDIR/build" "$MODDIR/source"
+
+          echo
+          echo "===== INSTALLED MODULE COUNTS ====="
+          KO_COUNT=$(find "$MODDIR" -type f -name '*.ko' | wc -l)
+          GZ_COUNT=$(find "$MODDIR" -type f -name '*.ko.gz' | wc -l)
+          XZ_COUNT=$(find "$MODDIR" -type f -name '*.ko.xz' | wc -l)
+          ZST_COUNT=$(find "$MODDIR" -type f -name '*.ko.zst' | wc -l)
+          TOTAL_MODULES=$((KO_COUNT + GZ_COUNT + XZ_COUNT + ZST_COUNT))
+          printf 'Uncompressed .ko: %s\n' "$KO_COUNT"
+          printf 'Gzip .ko.gz:      %s\n' "$GZ_COUNT"
+          printf 'XZ .ko.xz:        %s\n' "$XZ_COUNT"
+          printf 'ZSTD .ko.zst:     %s\n' "$ZST_COUNT"
+          printf 'Total modules:    %s\n' "$TOTAL_MODULES"
+
+          if [[ "$TOTAL_MODULES" -eq 0 ]]; then
+            echo "::error::No kernel module files were installed"
+            find "$MODDIR" -maxdepth 4 -type f -print | head -100 || true
+            exit 1
+          fi
+
+          echo
+          echo "===== MODULE FILE SAMPLES ====="
+          find "$MODDIR/kernel" -type f \
+            \( -name '*.ko' -o -name '*.ko.gz' -o -name '*.ko.xz' -o -name '*.ko.zst' \) \
+            -print | head -30 || true
+
+          echo
+          echo "===== DEPmod VERSION ====="
+          depmod --version
+
+          echo
+          echo "===== METADATA BEFORE DEPmod ====="
+          for FILE in modules.dep modules.builtin modules.order; do
+            if [[ -f "$MODDIR/$FILE" ]]; then
+              ls -lh "$MODDIR/$FILE"
+            else
+              echo "MISSING: $FILE"
+            fi
+          done
+
+          # Always regenerate metadata explicitly after modules_install.
+          # Capture verbose diagnostics so an empty modules.dep can be explained.
+          echo
+          echo "===== RUN VERBOSE DEPmod ====="
+          set +e
+          depmod -a -v -b "$STAGE" "$KREL" 2>&1 \
+            | tee "$GITHUB_WORKSPACE/depmod-debug.log"
+          DEPMOD_RC=${PIPESTATUS[0]}
+          set -e
+          echo "depmod exit code: $DEPMOD_RC"
+
+          echo
+          echo "===== DEPmod DRY-RUN OUTPUT ====="
+          set +e
+          depmod -n -v -b "$STAGE" "$KREL" \
+            > "$GITHUB_WORKSPACE/depmod-dry-run.txt" 2>&1
+          DRY_RC=$?
+          set -e
+          echo "depmod dry-run exit code: $DRY_RC"
+          head -100 "$GITHUB_WORKSPACE/depmod-dry-run.txt" || true
+
+          echo
+          echo "===== MODULES.DEP AFTER DEPmod ====="
+          if [[ -f "$MODDIR/modules.dep" ]]; then
+            ls -lh "$MODDIR/modules.dep"
+            wc -l "$MODDIR/modules.dep"
+            head -30 "$MODDIR/modules.dep" || true
+          else
+            echo "modules.dep was not created"
+          fi
+
+          echo
+          echo "===== FINAL DEPmod VALIDATION ====="
+          if [[ "$DEPMOD_RC" -ne 0 ]]; then
+            echo "::error::depmod failed with exit code $DEPMOD_RC"
+            exit "$DEPMOD_RC"
+          fi
+
+          if [[ ! -s "$MODDIR/modules.dep" ]]; then
+            echo "::error::modules.dep is empty after depmod"
+            echo "Check depmod-debug.log and depmod-dry-run.txt in the workflow workspace."
+            echo "Installed module count: $TOTAL_MODULES"
+            exit 1
+          fi
+
+          if [[ ! -s "$MODDIR/modules.builtin" ]]; then
+            echo "::error::modules.builtin missing or empty"
+            exit 1
+          fi
+
+          echo "modules.dep and modules.builtin verified"
+          echo
+          echo "===== MODULE INSTALLATION SUCCESSFUL ====="
+          du -sh "$MODDIR"
           ls -lh "$MODDIR"/modules.*
+          echo
+          echo "===== DISK SPACE AFTER INSTALL ====="
+          df -h "$GITHUB_WORKSPACE"
 
       # --------------------------------------------------
       # 8. Compare official inventory
@@ -853,6 +856,8 @@ jobs:
           test -s "$GITHUB_WORKSPACE/bzImage"
           test -s "$GITHUB_WORKSPACE/config"
           test -s "$GITHUB_WORKSPACE/modules.tar.gz"
+          test -f "$GITHUB_WORKSPACE/depmod-debug.log"
+          test -f "$GITHUB_WORKSPACE/depmod-dry-run.txt"
           test -s "$GITHUB_WORKSPACE/inventory-comparison.txt"
 
           # Verify final configuration.
@@ -871,6 +876,8 @@ jobs:
             bzImage \
             config \
             modules.tar.gz \
+            depmod-debug.log \
+            depmod-dry-run.txt \
             inventory-comparison.txt \
             > SHA256SUMS.txt
 
@@ -882,6 +889,8 @@ jobs:
             bzImage \
             config \
             modules.tar.gz \
+            depmod-debug.log \
+            depmod-dry-run.txt \
             inventory-comparison.txt \
             SHA256SUMS.txt
 
@@ -943,6 +952,8 @@ jobs:
             bzImage
             config
             modules.tar.gz
+            depmod-debug.log
+            depmod-dry-run.txt
             inventory-comparison.txt
             modules-missing-from-build.txt
             modules-extra-in-build.txt
