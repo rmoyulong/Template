@@ -630,11 +630,45 @@ jobs:
           echo "===== MODULE FILE SAMPLES ====="
           find "$MODDIR/kernel" -type f \
             \( -name '*.ko' -o -name '*.ko.gz' -o -name '*.ko.xz' -o -name '*.ko.zst' \) \
-            -print | head -30 || true
+            -print > "$GITHUB_WORKSPACE/module-file-list.txt"
+          sed -n '1,30p' "$GITHUB_WORKSPACE/module-file-list.txt"
 
           echo
           echo "===== DEPmod VERSION ====="
           depmod --version
+
+          # Ubuntu's kmod may be built without ZLIB support (-ZLIB).
+          # In that case depmod silently ignores .ko.gz files and can
+          # produce an empty modules.dep even though modules_install worked.
+          # Decompress only gzip-compressed modules before running depmod.
+          # Uncompressed .ko files are supported by all kmod builds.
+          echo
+          echo "===== NORMALIZE GZIP MODULES FOR DEPmod ====="
+          if depmod --version 2>&1 | grep -q -- '-ZLIB'; then
+            echo "kmod has no ZLIB support; decompressing staged .ko.gz modules"
+          else
+            echo "Proceeding with gzip module normalization for maximum compatibility"
+          fi
+
+          GZIP_BEFORE=$(find "$MODDIR/kernel" -type f -name '*.ko.gz' | wc -l)
+          echo "Gzip modules before normalization: $GZIP_BEFORE"
+
+          if [[ "$GZIP_BEFORE" -gt 0 ]]; then
+            while IFS= read -r -d '' MODULE; do
+              gzip -t "$MODULE"
+              gzip -d "$MODULE"
+            done < <(find "$MODDIR/kernel" -type f -name '*.ko.gz' -print0)
+          fi
+
+          GZIP_AFTER=$(find "$MODDIR/kernel" -type f -name '*.ko.gz' | wc -l)
+          KO_AFTER=$(find "$MODDIR/kernel" -type f -name '*.ko' | wc -l)
+          echo "Gzip modules after normalization: $GZIP_AFTER"
+          echo "Uncompressed .ko modules now:     $KO_AFTER"
+
+          if [[ "$GZIP_AFTER" -ne 0 ]]; then
+            echo "::error::Some .ko.gz modules could not be normalized"
+            exit 1
+          fi
 
           echo
           echo "===== METADATA BEFORE DEPmod ====="
@@ -832,7 +866,8 @@ jobs:
           echo
           echo "Archive verification:"
 
-          tar -tzf "$GITHUB_WORKSPACE/modules.tar.gz" | head -n 20
+          tar -tzf "$GITHUB_WORKSPACE/modules.tar.gz" > "$GITHUB_WORKSPACE/modules-archive-list.txt"
+          sed -n '1,20p' "$GITHUB_WORKSPACE/modules-archive-list.txt"
 
       # --------------------------------------------------
       # 10. Prepare final artifacts
