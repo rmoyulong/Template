@@ -44,20 +44,7 @@ jobs:
                       /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
           sudo apt-get clean
           df -h
-
-      - name: 切换 Ubuntu APT 镜像源
-        run: |
-          set -euo pipefail
-          
-            echo "===== ORIGINAL APT SOURCES ====="
-            cat /etc/apt/sources.list.d/ubuntu.sources
-            # 绕过 GitHub Runner 默认的 Azure mirror list
-            sudo sed -i -E \
-              's|mirror\+file:/etc/apt/apt-mirrors\.txt|https://mirrors.aliyun.com/ubuntu/|g; s|https?://azure\.archive\.ubuntu\.com/ubuntu/?|https://mirrors.aliyun.com/ubuntu/|g' \
-              /etc/apt/sources.list.d/ubuntu.sources
-            echo "===== UPDATED APT SOURCES ====="
-            cat /etc/apt/sources.list.d/ubuntu.sources
-            
+           
       - name: Install tools
         run: |
           sudo apt-get update
