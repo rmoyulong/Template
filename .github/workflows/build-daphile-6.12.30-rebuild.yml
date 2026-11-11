@@ -15,6 +15,7 @@ env:
   DAPHILE_DIR: 6.12.30-daphile
   KERNEL_VERSION: 6.12.30
   KERNEL_SUFFIX: -daphile-rebuild
+  KERNEL_RELEASE: 6.12.30-daphile-rebuild
 
 jobs:
   build:
@@ -77,8 +78,7 @@ jobs:
             python3 \
             rsync \
             wget \
-            git \
-            zstd
+            git
 
       # --------------------------------------------------
       # 4. Download exact Linux 6.12.30
@@ -97,7 +97,14 @@ jobs:
 
           cd linux-6.12.30
 
-          make -s kernelversion
+          VERSION="$(make -s kernelversion)"
+
+          echo "Kernel source version: $VERSION"
+
+          if [[ "$VERSION" != "6.12.30" ]]; then
+            echo "::error::Unexpected kernel source version: $VERSION"
+            exit 1
+          fi
 
       # --------------------------------------------------
       # 5. Reconstruct configuration
@@ -133,6 +140,7 @@ jobs:
 
           echo
           echo "===== INVENTORY FILES ====="
+
           wc -l "$MODS" "$BUILTINS" "$BUILTIN_PATHS"
 
           # --------------------------------------------------
@@ -154,9 +162,6 @@ jobs:
 
           # --------------------------------------------------
           # 3. Helper for Kconfig local*config commands
-          #
-          # Feed empty answers to Kconfig prompts.
-          # Capture make's exit status, not yes's SIGPIPE.
           # --------------------------------------------------
 
           run_local_config() {
@@ -169,8 +174,13 @@ jobs:
             echo "LSMOD=$inventory"
 
             set +o pipefail
-            yes "" | env LSMOD="$inventory" make "$target"
-            rc=${PIPESTATUS[1]}
+
+            if yes "" | env LSMOD="$inventory" make "$target"; then
+              rc=0
+            else
+              rc=$?
+            fi
+
             set -o pipefail
 
             if [[ "$rc" -ne 0 ]]; then
@@ -190,11 +200,10 @@ jobs:
           cp .config .config.allmodconfig
 
           run_local_config "$BUILTINS" localyesconfig
+
           cp .config .config.builtin-probe
 
           # Extract only symbols changed from m to y.
-          # This prevents unrelated allmodconfig defaults
-          # from being copied into the built-in fragment.
 
           awk '
             FNR == NR {
@@ -215,6 +224,7 @@ jobs:
 
           echo
           echo "Detected built-in configuration transitions:"
+
           wc -l .daphile-builtin-y.fragment
 
           # --------------------------------------------------
@@ -225,6 +235,7 @@ jobs:
           echo "===== PASS B: MODULE DETECTION ====="
 
           make allmodconfig
+
           run_local_config "$MODS" localmodconfig
 
           cp .config .config.localmodconfig
@@ -262,6 +273,7 @@ jobs:
           ./scripts/config --enable HIGH_RES_TIMERS
 
           # ALSA core: built-in
+
           ./scripts/config --enable SOUND
           ./scripts/config --enable SND
           ./scripts/config --enable SND_PCM
@@ -271,6 +283,7 @@ jobs:
           ./scripts/config --enable SND_PCI
 
           # Intel HDA stack: modules
+
           ./scripts/config --module SND_HDA
           ./scripts/config --module SND_HDA_CORE
           ./scripts/config --module SND_HDA_INTEL
@@ -279,7 +292,12 @@ jobs:
           ./scripts/config --module SND_HDA_CODEC_HDMI
           ./scripts/config --module SND_INTEL_DSP_CONFIG
 
+          # Kernel image compression: ZSTD
+
+          ./scripts/config --enable KERNEL_ZSTD
+
           # Kernel version suffix
+
           ./scripts/config --set-str LOCALVERSION "-daphile-rebuild"
           ./scripts/config --disable LOCALVERSION_AUTO
 
@@ -291,61 +309,59 @@ jobs:
           echo "===== KCONFIG OLDDEFCONFIG ====="
 
           make olddefconfig
-          
+
+          # --------------------------------------------------
+          # 9. Verify kernel compression mode
+          # --------------------------------------------------
+
+          echo
+          echo "===== KERNEL COMPRESSION CHECK ====="
+
+          KERNEL_COMPRESSIONS=$(grep -E '^CONFIG_KERNEL_[A-Z0-9_]+=y$' .config || true)
+
+          echo "$KERNEL_COMPRESSIONS"
+
+          if [[ "$KERNEL_COMPRESSIONS" != "CONFIG_KERNEL_ZSTD=y" ]]; then
+            echo "::error::Kernel compression mode is not exclusively ZSTD"
+            exit 1
+          fi
+
           grep -q '^CONFIG_KERNEL_ZSTD=y$' .config || {
             echo "::error::CONFIG_KERNEL_ZSTD is not enabled"
             exit 1
           }
 
-          grep -E '^(CONFIG_KERNEL_(ZSTD|GZIP|BZIP2|LZMA|XZ|LZO|LZ4|UNCOMPRESSED)=|# CONFIG_KERNEL_)' .config
-
-          # Explicitly verify the configured local version.
-          grep -E '^CONFIG_LOCALVERSION=|^# CONFIG_LOCALVERSION_AUTO' .config
+          echo "Kernel compression: ZSTD"
 
           # --------------------------------------------------
-          # 9. Verify kernel release
+          # 10. Verify local version
           # --------------------------------------------------
 
           echo
-          echo "===== LOCALVERSION DIAGNOSTICS ====="
+          echo "===== LOCALVERSION CHECK ====="
 
-          echo "--- .config values ---"
           grep -E '^(CONFIG_LOCALVERSION=|CONFIG_LOCALVERSION_AUTO=|# CONFIG_LOCALVERSION_AUTO)' .config || true
 
-          echo
-          echo "--- Environment ---"
-          env | grep -E '^(LOCALVERSION|KERNELRELEASE|KBUILD_BUILD_VERSION)=' || true
+          # --------------------------------------------------
+          # 11. Verify kernel release
+          # --------------------------------------------------
 
           echo
-          echo "--- Kernel release without override ---"
-          make -s kernelrelease
+          echo "===== KERNEL RELEASE CHECK ====="
 
-          echo
-          echo "--- Kernel release with explicit override ---"
           KREL=$(make -s LOCALVERSION=-daphile-rebuild kernelrelease)
 
           echo "Kernel release: $KREL"
 
           if [[ "$KREL" != "6.12.30-daphile-rebuild" ]]; then
-            echo "::error::Kernel release verification failed"
+            echo "::error::Unexpected kernel release: $KREL"
             exit 1
           fi
 
           echo "Kernel release verification successful"
 
           # --------------------------------------------------
-          # 10. Verify important configuration values
-          # --------------------------------------------------
-
-          echo
-          echo "===== FINAL CONFIGURATION ====="
-
-          grep -E \
-            '^(CONFIG_(X86_64|SMP|EXPERT|PREEMPT_RT|MODULES|MODULE_UNLOAD|HIGH_RES_TIMERS|SOUND|SND|SND_PCM|SND_TIMER|SND_HRTIMER|SND_ALOOP|SND_PCI|SND_HDA|SND_HDA_CORE|SND_HDA_INTEL|SND_HDA_GENERIC|SND_HDA_CODEC_REALTEK|SND_HDA_CODEC_HDMI|SND_INTEL_DSP_CONFIG|LOCALVERSION))=' \
-            .config || true
-
-          # --------------------------------------------------
-          # 11. Verify required symbols
+          # 12. Verify important configuration values
           # --------------------------------------------------
 
           require_config() {
@@ -368,7 +384,11 @@ jobs:
           require_config CONFIG_PREEMPT_RT y
           require_config CONFIG_MODULES y
           require_config CONFIG_MODULE_UNLOAD y
+          require_config CONFIG_HIGH_RES_TIMERS y
+
           require_config CONFIG_LOCALVERSION '"-daphile-rebuild"'
+
+          require_config CONFIG_KERNEL_ZSTD y
 
           require_config CONFIG_SOUND y
           require_config CONFIG_SND y
@@ -386,10 +406,17 @@ jobs:
           require_config CONFIG_SND_INTEL_DSP_CONFIG m
 
           # --------------------------------------------------
-          # 12. Save reconstructed configuration
+          # 13. Save reconstructed configuration
           # --------------------------------------------------
 
           cp .config .config.daphile-6.12.30-reconstructed
+
+          echo
+          echo "===== FINAL CONFIGURATION ====="
+
+          grep -E \
+            '^(CONFIG_(KERNEL_ZSTD|LOCALVERSION|HIGH_RES_TIMERS|PREEMPT_RT|EXPERT|X86_64|SMP|MODULES|MODULE_UNLOAD|SOUND|SND|SND_PCM|SND_TIMER|SND_HRTIMER|SND_ALOOP|SND_PCI|SND_HDA|SND_HDA_CORE|SND_HDA_INTEL|SND_HDA_GENERIC|SND_HDA_CODEC_REALTEK|SND_HDA_CODEC_HDMI|SND_INTEL_DSP_CONFIG))=' \
+            .config || true
 
           echo
           echo "=========================================="
@@ -400,6 +427,7 @@ jobs:
           echo "Config file: .config"
           echo "Backup: .config.daphile-6.12.30-reconstructed"
           echo "Built-in transitions: $(wc -l < .daphile-builtin-y.fragment)"
+          echo "Kernel compression: ZSTD"
           echo "=========================================="
 
       # --------------------------------------------------
@@ -417,9 +445,18 @@ jobs:
           echo "Building Linux 6.12.30"
           echo "=================================="
 
+          KREL="$(make -s LOCALVERSION=-daphile-rebuild kernelrelease)"
+
+          if [[ "$KREL" != "$KERNEL_RELEASE" ]]; then
+            echo "::error::Unexpected kernel release: $KREL"
+            exit 1
+          fi
+
           make LOCALVERSION=-daphile-rebuild -j"$(nproc)" bzImage modules
 
           test -s arch/x86/boot/bzImage
+
+          echo "Built kernel release: $KREL"
 
           ls -lh arch/x86/boot/bzImage
 
@@ -432,23 +469,33 @@ jobs:
         run: |
           set -euo pipefail
 
-          KREL="$(make -s kernelrelease)"
+          KREL="$(make -s LOCALVERSION=-daphile-rebuild kernelrelease)"
+
+          if [[ "$KREL" != "$KERNEL_RELEASE" ]]; then
+            echo "::error::Unexpected kernel release: $KREL"
+            exit 1
+          fi
 
           STAGE="$GITHUB_WORKSPACE/modules-staging"
 
-          make LOCALVERSION=-daphile-rebuild INSTALL_MOD_PATH="$STAGE" modules_install
+          make LOCALVERSION=-daphile-rebuild \
+            INSTALL_MOD_PATH="$STAGE" \
+            modules_install
 
           MODDIR="$STAGE/lib/modules/$KREL"
 
           test -d "$MODDIR"
-          test -s "$MODDIR/modules.dep"
-          test -s "$MODDIR/modules.builtin"
 
           # Remove build-time source links if present.
+
           rm -f "$MODDIR/build" "$MODDIR/source"
 
           # Regenerate module dependency metadata.
+
           depmod -b "$STAGE" "$KREL"
+
+          test -s "$MODDIR/modules.dep"
+          test -s "$MODDIR/modules.builtin"
 
           echo "Installed module directory:"
           du -sh "$MODDIR"
@@ -463,11 +510,12 @@ jobs:
 
           ROOT="$GITHUB_WORKSPACE/$DAPHILE_DIR"
 
-          KREL="6.12.30-daphile-rebuild"
+          KREL="$KERNEL_RELEASE"
 
           MODDIR="$GITHUB_WORKSPACE/modules-staging/lib/modules/$KREL"
 
           # Official module names.
+
           tail -n +2 \
             "$ROOT/daphile-6.12.30-official-modules.lsmod" \
             | awk '{print $1}' \
@@ -475,6 +523,7 @@ jobs:
             > "$GITHUB_WORKSPACE/official-modules.names"
 
           # Built module names.
+
           find "$MODDIR" -type f \
             \( -name '*.ko' -o -name '*.ko.xz' \
                -o -name '*.ko.zst' -o -name '*.ko.gz' \) \
@@ -485,6 +534,7 @@ jobs:
             > "$GITHUB_WORKSPACE/built-modules.names"
 
           # Compare module names.
+
           comm -23 \
             "$GITHUB_WORKSPACE/official-modules.names" \
             "$GITHUB_WORKSPACE/built-modules.names" \
@@ -496,10 +546,12 @@ jobs:
             > "$GITHUB_WORKSPACE/modules-extra-in-build.txt"
 
           # Official built-in object paths.
+
           sort -u "$ROOT/daphile-6.12.30-official-builtin.paths" \
             > "$GITHUB_WORKSPACE/official-builtin.paths.sorted"
 
           # Newly generated built-in object paths.
+
           sort -u "$MODDIR/modules.builtin" \
             > "$GITHUB_WORKSPACE/built-builtin.paths"
 
@@ -514,9 +566,12 @@ jobs:
             > "$GITHUB_WORKSPACE/builtin-extra-in-build.txt"
 
           # Generate comparison report.
+
           {
             echo "Daphile 6.12.30 inventory comparison"
             echo "===================================="
+            echo
+            echo "Kernel release: $KREL"
             echo
             echo "Official modules: $(wc -l < "$GITHUB_WORKSPACE/official-modules.names")"
             echo "Built modules: $(wc -l < "$GITHUB_WORKSPACE/built-modules.names")"
@@ -545,9 +600,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          KREL="6.12.30-daphile-rebuild"
+          KREL="$KERNEL_RELEASE"
 
           STAGE="$GITHUB_WORKSPACE/modules-staging"
+
+          MODDIR="$STAGE/lib/modules/$KREL"
+
+          test -d "$MODDIR"
+          test -s "$MODDIR/modules.dep"
 
           cd "$STAGE/lib/modules"
 
@@ -555,6 +615,8 @@ jobs:
             --numeric-owner \
             -czf "$GITHUB_WORKSPACE/modules.tar.gz" \
             "$KREL"
+
+          test -s "$GITHUB_WORKSPACE/modules.tar.gz"
 
           ls -lh "$GITHUB_WORKSPACE/modules.tar.gz"
 
@@ -567,7 +629,15 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Kernel image.
+
           cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/bzImage"
+
+          # Final configuration used for this build.
+
+          cp .config "$GITHUB_WORKSPACE/config"
+
+          # Verify all artifacts.
 
           test -s "$GITHUB_WORKSPACE/bzImage"
           test -s "$GITHUB_WORKSPACE/config"
@@ -583,6 +653,14 @@ jobs:
             "$GITHUB_WORKSPACE/config" \
             "$GITHUB_WORKSPACE/modules.tar.gz" \
             "$GITHUB_WORKSPACE/inventory-comparison.txt"
+
+          echo
+          echo "Final kernel compression:"
+          grep '^CONFIG_KERNEL_ZSTD=y$' "$GITHUB_WORKSPACE/config"
+
+          echo
+          echo "Final kernel version:"
+          grep '^CONFIG_LOCALVERSION=' "$GITHUB_WORKSPACE/config"
 
       # --------------------------------------------------
       # 11. Publish GitHub Release
@@ -611,6 +689,7 @@ jobs:
             Kernel: Linux 6.12.30
             PREEMPT_RT: enabled
             Local version: -daphile-rebuild
+            Kernel compression: ZSTD
 
             Configuration reconstructed using:
             - Official Daphile module inventory
