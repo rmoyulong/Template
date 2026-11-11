@@ -102,7 +102,7 @@ jobs:
           path: ~/.cache/ccache
           key: linux-7.3.x-x86_64-${{ runner.os }}-${{ github.ref }}
           restore-keys: |
-            linux-${{ env.KERNEL_VERSION }}-x86_64-${{ runner.os }}-
+            linux-7.3.x-x86_64-${{ runner.os }}-
 
       - name: 下载内核源码
         run: |
