@@ -84,21 +84,21 @@ jobs:
           # 绝不能只 cp 一份残缺配置就 olddefconfig，否则父选项没触发、
           # 子系统整块没进来，条目数只有 1200+。
           # ============================================================
-
+          
           # 1) 从官方 x86_64 默认配置起步（约 1700 个 =y/=m 条目，完整可启动）
           make x86_64_defconfig
           COUNT0=$(grep -c '^CONFIG_[A-Za-z0-9_]\+=' .config)
           echo "defconfig 条目数: $COUNT0"
-
+          
           # 2) 合并我们的增量配置片段（只写需要修改/额外开启的选项）
           ./scripts/kconfig/merge_config.sh -m -O . .config "$FRAGMENT"
-
+          
           # 3) 禁用证书相关选项，避免构建时报签名错误
           scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
           scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
           scripts/config --disable MODULE_SIG_ALL
           scripts/config --disable MODULE_SIG_FORCE
-
+          
           # Apply confirmed Daphile configuration.
           
           echo
@@ -144,10 +144,7 @@ jobs:
           # Kernel version suffix.
           # Set suffix ONLY in .config.
           # Do NOT pass LOCALVERSION to make later.
-          
-          ./scripts/config --set-str LOCALVERSION "$KERNEL_SUFFIX"
-          ./scripts/config --disable LOCALVERSION_AUTO
-          
+         
           # Resolve Kconfig dependencies.
           
           echo

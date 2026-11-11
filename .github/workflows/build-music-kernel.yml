@@ -101,10 +101,7 @@ jobs:
           # Kernel version suffix.
           # Set suffix ONLY in .config.
           # Do NOT pass LOCALVERSION to make later.
-          
-          ./scripts/config --set-str LOCALVERSION "$KERNEL_SUFFIX"
-          ./scripts/config --disable LOCALVERSION_AUTO
-          
+         
           # Resolve Kconfig dependencies.
           
           echo
