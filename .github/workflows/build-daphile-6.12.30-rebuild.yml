@@ -103,120 +103,281 @@ jobs:
       # --------------------------------------------------
 
       - name: Reconstruct config from official module inventory
+        shell: bash
         working-directory: linux-6.12.30
+        env:
+          DAPHILE_DIR: 6.12.30-daphile
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
 
-          ROOT="$GITHUB_WORKSPACE/$DAPHILE_DIR"
+          echo "=========================================="
+          echo "Daphile Linux 6.12.30 config reconstruction"
+          echo "=========================================="
 
-          test -f "$ROOT/daphile-6.12.30-official-modules.lsmod"
-          test -f "$ROOT/daphile-6.12.30-official-builtin.lsmod"
-          test -f "$ROOT/daphile-6.12.30-official-builtin.paths"
-          test -f "$ROOT/daphile-6.12.30-confirmed-v2.fragment"
-          test -f "$ROOT/reconstruct-daphile-6.12.30-config.sh"
+          MODS="../${DAPHILE_DIR}/daphile-6.12.30-official-modules.lsmod"
+          BUILTINS="../${DAPHILE_DIR}/daphile-6.12.30-official-builtin.lsmod"
+          BUILTIN_PATHS="../${DAPHILE_DIR}/daphile-6.12.30-official-builtin.paths"
+          FRAGMENT="../${DAPHILE_DIR}/daphile-6.12.30-confirmed-v2.fragment"
 
-          export ARCH=x86
+          # --------------------------------------------------
+          # 1. Check source tree and inventory files
+          # --------------------------------------------------
 
-          # Avoid EOF errors from interactive Kconfig reads.
-          # The empty answers select Kconfig defaults.
-          python3 - "$ROOT/reconstruct-daphile-6.12.30-config.sh" <<'PY'
-          import pathlib
-          import sys
+          test -f Makefile
+          test -x scripts/kconfig/streamline_config.pl
+          test -f "$MODS"
+          test -f "$BUILTINS"
+          test -f "$BUILTIN_PATHS"
+          test -f "$FRAGMENT"
 
-          p = pathlib.Path(sys.argv[1])
-          s = p.read_text()
+          echo
+          echo "===== INVENTORY FILES ====="
+          wc -l "$MODS" "$BUILTINS" "$BUILTIN_PATHS"
 
-          replacements = {
-              'LSMOD="$BUILTINS" make localyesconfig':
-              'set +o pipefail\n'
-              'yes "" | env LSMOD="$BUILTINS" make localyesconfig\n'
-              'set -o pipefail',
+          # --------------------------------------------------
+          # 2. Count official module inventories
+          # --------------------------------------------------
 
-              'LSMOD="$MODS" make localmodconfig':
-              'set +o pipefail\n'
-              'yes "" | env LSMOD="$MODS" make localmodconfig\n'
-              'set -o pipefail',
-          }
+          MOD_COUNT=$(awk 'NR > 1 && NF {count++} END {print count+0}' "$MODS")
+          BUILTIN_COUNT=$(awk 'NR > 1 && NF {count++} END {print count+0}' "$BUILTINS")
+          BUILTIN_PATH_COUNT=$(grep -c '^kernel/.*\.ko$' "$BUILTIN_PATHS" || true)
 
-          for old, new in replacements.items():
-              count = s.count(old)
-              if count != 1:
-                  raise SystemExit(
-                      f"Expected exactly one occurrence of {old!r}, found {count}"
-                  )
-              s = s.replace(old, new)
+          echo "Official loadable modules : $MOD_COUNT"
+          echo "Official built-in objects : $BUILTIN_COUNT"
+          echo "Built-in module paths     : $BUILTIN_PATH_COUNT"
 
-          p.write_text(s)
-          print("Patched Kconfig input handling successfully")
-          PY
+          if [[ "$MOD_COUNT" -eq 0 || "$BUILTIN_COUNT" -eq 0 ]]; then
+            echo "::error::Official module inventory is empty"
+            exit 1
+          fi
 
-          # Execute the evidence-based reconstruction.
-          bash "$ROOT/reconstruct-daphile-6.12.30-config.sh"
+          # --------------------------------------------------
+          # 3. Helper for Kconfig local*config commands
+          #
+          # Feed empty answers to Kconfig prompts.
+          # Capture make's exit status, not yes's SIGPIPE.
+          # --------------------------------------------------
 
-          test -s .config
-          test -s .config.daphile-6.12.30-reconstructed
+          run_local_config() {
+            local inventory="$1"
+            local target="$2"
+            local rc
 
-          cp .config "$GITHUB_WORKSPACE/config"
+            echo
+            echo "===== Running make $target ====="
+            echo "LSMOD=$inventory"
 
-          # ------------------------------------------------
-          # Verify important reconstructed values
-          # ------------------------------------------------
+            set +o pipefail
+            yes "" | env LSMOD="$inventory" make "$target"
+            rc=${PIPESTATUS[1]}
+            set -o pipefail
 
-          require() {
-            local symbol="$1"
-            local value="$2"
-
-            if ! grep -qx "${symbol}=${value}" .config; then
-              echo "::error::${symbol} expected ${value}"
-              grep -E "^${symbol}=" .config || true
-              exit 1
+            if [[ "$rc" -ne 0 ]]; then
+              echo "::error::make $target failed with exit code $rc"
+              return "$rc"
             fi
           }
 
-          require CONFIG_X86_64 y
-          require CONFIG_SMP y
-          require CONFIG_EXPERT y
-          require CONFIG_PREEMPT_RT y
+          # --------------------------------------------------
+          # 4. Pass A: identify official built-in objects
+          # --------------------------------------------------
 
-          require CONFIG_MODULES y
-          require CONFIG_MODULE_UNLOAD y
+          echo
+          echo "===== PASS A: BUILT-IN DETECTION ====="
 
-          require CONFIG_HIGH_RES_TIMERS y
+          make allmodconfig
+          cp .config .config.allmodconfig
 
-          require CONFIG_SOUND y
-          require CONFIG_SND y
-          require CONFIG_SND_PCM y
-          require CONFIG_SND_TIMER y
-          require CONFIG_SND_HRTIMER y
-          require CONFIG_SND_ALOOP y
+          run_local_config "$BUILTINS" localyesconfig
+          cp .config .config.builtin-probe
 
-          require CONFIG_SND_HDA m
-          require CONFIG_SND_HDA_CORE m
-          require CONFIG_SND_HDA_INTEL m
-          require CONFIG_SND_HDA_GENERIC m
-          require CONFIG_SND_HDA_CODEC_REALTEK m
-          require CONFIG_SND_HDA_CODEC_HDMI m
-          require CONFIG_SND_INTEL_DSP_CONFIG m
+          # Extract only symbols changed from m to y.
+          # This prevents unrelated allmodconfig defaults
+          # from being copied into the built-in fragment.
 
-          require CONFIG_LOCALVERSION '"-daphile-rebuild"'
+          awk '
+            FNR == NR {
+              if ($0 ~ /^CONFIG_[A-Za-z0-9_]+=m$/) {
+                split($0, a, "=")
+                was_m[a[1]] = 1
+              }
+              next
+            }
 
-          # Verify kernel release.
-          KREL="$(make -s kernelrelease)"
+            /^CONFIG_[A-Za-z0-9_]+=y$/ {
+              split($0, a, "=")
+              if (a[1] in was_m)
+                print
+            }
+          ' .config.allmodconfig .config.builtin-probe \
+            | sort -u > .daphile-builtin-y.fragment
 
+          echo
+          echo "Detected built-in configuration transitions:"
+          wc -l .daphile-builtin-y.fragment
+
+          # --------------------------------------------------
+          # 5. Pass B: reconstruct official loadable modules
+          # --------------------------------------------------
+
+          echo
+          echo "===== PASS B: MODULE DETECTION ====="
+
+          make allmodconfig
+          run_local_config "$MODS" localmodconfig
+
+          cp .config .config.localmodconfig
+
+          # --------------------------------------------------
+          # 6. Merge confirmed built-in configuration
+          # --------------------------------------------------
+
+          echo
+          echo "===== MERGE BUILT-IN CONFIGURATION ====="
+
+          ./scripts/kconfig/merge_config.sh \
+            -m \
+            -O . \
+            .config \
+            .daphile-builtin-y.fragment
+
+          # --------------------------------------------------
+          # 7. Apply confirmed Daphile configuration
+          # --------------------------------------------------
+
+          echo
+          echo "===== APPLY CONFIRMED CONFIGURATION ====="
+
+          ./scripts/config --enable EXPERT
+          ./scripts/config --enable X86_64
+          ./scripts/config --enable SMP
+          ./scripts/config --enable PCI
+          ./scripts/config --enable INPUT
+
+          ./scripts/config --enable MODULES
+          ./scripts/config --enable MODULE_UNLOAD
+
+          ./scripts/config --enable PREEMPT_RT
+          ./scripts/config --enable HIGH_RES_TIMERS
+
+          # ALSA core: built-in
+          ./scripts/config --enable SOUND
+          ./scripts/config --enable SND
+          ./scripts/config --enable SND_PCM
+          ./scripts/config --enable SND_TIMER
+          ./scripts/config --enable SND_HRTIMER
+          ./scripts/config --enable SND_ALOOP
+          ./scripts/config --enable SND_PCI
+
+          # Intel HDA stack: modules
+          ./scripts/config --module SND_HDA
+          ./scripts/config --module SND_HDA_CORE
+          ./scripts/config --module SND_HDA_INTEL
+          ./scripts/config --module SND_HDA_GENERIC
+          ./scripts/config --module SND_HDA_CODEC_REALTEK
+          ./scripts/config --module SND_HDA_CODEC_HDMI
+          ./scripts/config --module SND_INTEL_DSP_CONFIG
+
+          # Kernel version suffix
+          ./scripts/config --set-str LOCALVERSION "-daphile-rebuild"
+          ./scripts/config --disable LOCALVERSION_AUTO
+
+          # --------------------------------------------------
+          # 8. Resolve Kconfig dependencies
+          # --------------------------------------------------
+
+          echo
+          echo "===== KCONFIG OLDDEFCONFIG ====="
+
+          make olddefconfig
+
+          # Explicitly verify the configured local version.
+          grep -E '^CONFIG_LOCALVERSION=|^# CONFIG_LOCALVERSION_AUTO' .config
+
+          # --------------------------------------------------
+          # 9. Verify kernel release
+          # --------------------------------------------------
+
+          echo
+          echo "===== KERNEL RELEASE CHECK ====="
+
+          KREL=$(make -s kernelrelease)
           echo "Kernel release: $KREL"
 
           if [[ "$KREL" != "6.12.30-daphile-rebuild" ]]; then
             echo "::error::Unexpected kernel release: $KREL"
+            echo "Expected: 6.12.30-daphile-rebuild"
             exit 1
           fi
 
-          # Save final config after olddefconfig.
-          cp .config "$GITHUB_WORKSPACE/config"
+          # --------------------------------------------------
+          # 10. Verify important configuration values
+          # --------------------------------------------------
 
-          cp .config.daphile-6.12.30-reconstructed \
-            "$GITHUB_WORKSPACE/config-reconstructed-before-final.txt"
+          echo
+          echo "===== FINAL CONFIGURATION ====="
 
-          echo "Configuration verification passed."
+          grep -E \
+            '^(CONFIG_(X86_64|SMP|EXPERT|PREEMPT_RT|MODULES|MODULE_UNLOAD|HIGH_RES_TIMERS|SOUND|SND|SND_PCM|SND_TIMER|SND_HRTIMER|SND_ALOOP|SND_PCI|SND_HDA|SND_HDA_CORE|SND_HDA_INTEL|SND_HDA_GENERIC|SND_HDA_CODEC_REALTEK|SND_HDA_CODEC_HDMI|SND_INTEL_DSP_CONFIG|LOCALVERSION))=' \
+            .config || true
+
+          # --------------------------------------------------
+          # 11. Verify required symbols
+          # --------------------------------------------------
+
+          require_config() {
+            local symbol="$1"
+            local expected="$2"
+            local actual
+
+            actual=$(grep -E "^${symbol}=" .config || true)
+
+            if [[ "$actual" != "${symbol}=${expected}" ]]; then
+              echo "::error::Configuration mismatch: ${symbol}"
+              echo "Expected: ${symbol}=${expected}"
+              echo "Actual:   ${actual:-not set}"
+              exit 1
+            fi
+          }
+
+          require_config CONFIG_X86_64 y
+          require_config CONFIG_SMP y
+          require_config CONFIG_PREEMPT_RT y
+          require_config CONFIG_MODULES y
+          require_config CONFIG_MODULE_UNLOAD y
+          require_config CONFIG_LOCALVERSION '"-daphile-rebuild"'
+
+          require_config CONFIG_SOUND y
+          require_config CONFIG_SND y
+          require_config CONFIG_SND_PCM y
+          require_config CONFIG_SND_TIMER y
+          require_config CONFIG_SND_HRTIMER y
+          require_config CONFIG_SND_ALOOP y
+
+          require_config CONFIG_SND_HDA m
+          require_config CONFIG_SND_HDA_CORE m
+          require_config CONFIG_SND_HDA_INTEL m
+          require_config CONFIG_SND_HDA_GENERIC m
+          require_config CONFIG_SND_HDA_CODEC_REALTEK m
+          require_config CONFIG_SND_HDA_CODEC_HDMI m
+          require_config CONFIG_SND_INTEL_DSP_CONFIG m
+
+          # --------------------------------------------------
+          # 12. Save reconstructed configuration
+          # --------------------------------------------------
+
+          cp .config .config.daphile-6.12.30-reconstructed
+
+          echo
+          echo "=========================================="
+          echo "CONFIG RECONSTRUCTION SUCCESSFUL"
+          echo "=========================================="
+
+          echo "Kernel release: $KREL"
+          echo "Config file: .config"
+          echo "Backup: .config.daphile-6.12.30-reconstructed"
+          echo "Built-in transitions: $(wc -l < .daphile-builtin-y.fragment)"
+          echo "=========================================="
 
       # --------------------------------------------------
       # 6. Build kernel
