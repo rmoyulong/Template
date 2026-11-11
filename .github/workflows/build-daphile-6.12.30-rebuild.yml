@@ -305,29 +305,43 @@ jobs:
             echo
             echo "===== VERIFY GENERATED CONFIG ====="
 
-            test -f include/config/auto.conf
+            test -s include/config/auto.conf
 
-            echo "CONFIG_LOCALVERSION in auto.conf:"
-            grep -n '^CONFIG_LOCALVERSION=' include/config/auto.conf || true
+            AUTO_LOCALVERSION="$(
+              sed -n 's/^CONFIG_LOCALVERSION=//p' include/config/auto.conf
+            )"
+
+            echo "CONFIG_LOCALVERSION in auto.conf: $AUTO_LOCALVERSION"
+
+            if [[ "$AUTO_LOCALVERSION" != "-daphile-rebuild" ]]; then
+              echo "::error::CONFIG_LOCALVERSION synchronization failed"
+              exit 1
+            fi
 
             echo
             echo "===== GENERATE KERNEL RELEASE ====="
 
-            make -s kernelrelease
+            KREL="$(make -s kernelrelease)"
 
-            test -s include/config/kernel.release
-
-            KREL="$(cat include/config/kernel.release)"
-
-            echo "Generated kernel.release: $KREL"
+            echo "Generated kernel release: $KREL"
 
             if [[ "$KREL" != "$KERNEL_RELEASE" ]]; then
-                echo "::error::Generated kernel.release mismatch: $KREL"
-                exit 1
+              echo "::error::Generated kernel release mismatch: $KREL"
+              exit 1
             fi
 
-            echo "Kernel release synchronization successful"
-          
+            # Verify a second time to detect inconsistent results.
+
+            KREL_SECOND="$(make -s kernelrelease)"
+
+            echo "Second kernel release: $KREL_SECOND"
+
+            if [[ "$KREL_SECOND" != "$KERNEL_RELEASE" ]]; then
+              echo "::error::Kernel release is inconsistent"
+              exit 1
+            fi
+
+            echo "Kernel release synchronization successful"          
 
           # Verify kernel compression.
 
