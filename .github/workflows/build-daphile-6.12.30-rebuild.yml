@@ -53,30 +53,56 @@ jobs:
       # 3. Install dependencies
       # --------------------------------------------------
 
+
       - name: Install kernel build dependencies
         run: |
           set -euo pipefail
 
-          sudo apt-get update
+            echo "===== APT UPDATE WITH RETRIES ====="
 
-          sudo apt-get install -y \
-            build-essential \
-            libncurses-dev \
-            bison \
-            flex \
-            libssl-dev \
-            libelf-dev \
-            bc \
-            xz-utils \
-            zstd \
-            cpio \
-            dwarves \
-            kmod \
-            perl \
-            python3 \
-            rsync \
-            wget \
-            git
+            for attempt in 1 2 3 4 5; do
+              echo "APT update attempt: $attempt"
+
+              if sudo apt-get \
+                -o Acquire::Retries=3 \
+                -o Acquire::http::Timeout=30 \
+                -o Acquire::https::Timeout=30 \
+                update; then
+                break
+              fi
+
+              if [[ "$attempt" -eq 5 ]]; then
+                echo "::error::APT update failed after 5 attempts"
+                exit 1
+              fi
+
+              sleep 20
+            done
+
+            echo "===== INSTALL BUILD DEPENDENCIES ====="
+
+            sudo apt-get install -y \
+              -o Acquire::Retries=3 \
+              -o Acquire::http::Timeout=30 \
+              -o Acquire::https::Timeout=30 \
+              build-essential \
+              libncurses-dev \
+              bison \
+              flex \
+              libssl-dev \
+              libelf-dev \
+              bc \
+              xz-utils \
+              zstd \
+              cpio \
+              dwarves \
+              kmod \
+              perl \
+              python3 \
+              rsync \
+              wget \
+              git
+
 
       # --------------------------------------------------
       # 4. Download exact Linux 6.12.30
