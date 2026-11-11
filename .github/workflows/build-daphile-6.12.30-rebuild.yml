@@ -6,6 +6,9 @@ on:
 permissions:
   contents: write
 
+env:
+  DAPHILE_DIR: 6.12.30-daphile
+
 jobs:
   build:
     name: 6.12.30 PREEMPT_RT reconstruction
@@ -37,9 +40,9 @@ jobs:
         working-directory: linux-6.12.30
         run: |
           set -euo pipefail
-          test -f "$GITHUB_WORKSPACE/6.12.30-daphile/daphile-6.12.30-official-modules.lsmod"
-          test -f "$GITHUB_WORKSPACE/6.12.30-daphile/daphile-6.12.30-official-builtin.lsmod"
-          bash "$GITHUB_WORKSPACE/6.12.30-daphile/reconstruct-daphile-6.12.30-config.sh"
+          test -f "$GITHUB_WORKSPACE/$DAPHILE_DIR/daphile-6.12.30-official-modules.lsmod"
+          test -f "$GITHUB_WORKSPACE/$DAPHILE_DIR/daphile-6.12.30-official-builtin.lsmod"
+          bash "$GITHUB_WORKSPACE/$DAPHILE_DIR/reconstruct-daphile-6.12.30-config.sh"
           cp .config "$GITHUB_WORKSPACE/config-6.12.30-daphile-rebuild.txt"
 
           require() {
@@ -84,7 +87,7 @@ jobs:
           find "$MODDIR" -type f -name '*.ko' -printf '%f\n' \
             | sed 's/\.ko$//' | tr '-' '_' | sort -u \
             > "$GITHUB_WORKSPACE/built-modules.names"
-          tail -n +2 "$GITHUB_WORKSPACE/daphile-6.12.30-official-modules.lsmod" \
+          tail -n +2 "$GITHUB_WORKSPACE/$DAPHILE_DIR/daphile-6.12.30-official-modules.lsmod" \
             | awk '{print $1}' | sort -u \
             > "$GITHUB_WORKSPACE/official-modules.names"
           comm -23 "$GITHUB_WORKSPACE/official-modules.names" "$GITHUB_WORKSPACE/built-modules.names" \
@@ -93,7 +96,7 @@ jobs:
             > "$GITHUB_WORKSPACE/modules-extra-in-build.txt"
 
           sort -u "$MODDIR/modules.builtin" > "$GITHUB_WORKSPACE/built-builtin.paths"
-          sort -u "$GITHUB_WORKSPACE/daphile-6.12.30-official-builtin.paths" \
+          sort -u "$GITHUB_WORKSPACE/$DAPHILE_DIR/daphile-6.12.30-official-builtin.paths" \
             > "$GITHUB_WORKSPACE/official-builtin.paths.sorted"
           comm -23 "$GITHUB_WORKSPACE/official-builtin.paths.sorted" "$GITHUB_WORKSPACE/built-builtin.paths" \
             > "$GITHUB_WORKSPACE/builtin-missing-from-build.txt"
