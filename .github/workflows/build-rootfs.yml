@@ -53,7 +53,7 @@ jobs:
             sudo gpg --homedir /root/.gnupg \
                      --no-default-keyring \
                      --keyring /usr/share/keyrings/debian-archive-keyring.gpg \
-                     --keyserver keyserver.ubuntu.com \
+                     --keyserver hkps://keyserver.ubuntu.com \
                      --recv-keys 4D64FEC119C2029067D6E791F8D2585B8783D481
           fi
 
