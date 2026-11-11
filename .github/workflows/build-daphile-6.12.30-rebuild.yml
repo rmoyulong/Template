@@ -77,7 +77,8 @@ jobs:
             python3 \
             rsync \
             wget \
-            git
+            git \
+            zstd
 
       # --------------------------------------------------
       # 4. Download exact Linux 6.12.30
@@ -290,6 +291,13 @@ jobs:
           echo "===== KCONFIG OLDDEFCONFIG ====="
 
           make olddefconfig
+          
+          grep -q '^CONFIG_KERNEL_ZSTD=y$' .config || {
+            echo "::error::CONFIG_KERNEL_ZSTD is not enabled"
+            exit 1
+          }
+
+          grep -E '^(CONFIG_KERNEL_(ZSTD|GZIP|BZIP2|LZMA|XZ|LZO|LZ4|UNCOMPRESSED)=|# CONFIG_KERNEL_)' .config
 
           # Explicitly verify the configured local version.
           grep -E '^CONFIG_LOCALVERSION=|^# CONFIG_LOCALVERSION_AUTO' .config

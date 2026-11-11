@@ -46,6 +46,16 @@ LSMOD="$MODS" make localmodconfig
 # Overlay only the =y transitions proven by modules.builtin.
 ./scripts/kconfig/merge_config.sh -m -O . .config .daphile-builtin-y.fragment
 
+# Kernel image compression: ZSTD
+./scripts/config --enable KERNEL_ZSTD
+./scripts/config --disable KERNEL_GZIP
+./scripts/config --disable KERNEL_BZIP2
+./scripts/config --disable KERNEL_LZMA
+./scripts/config --disable KERNEL_XZ
+./scripts/config --disable KERNEL_LZO
+./scripts/config --disable KERNEL_LZ4
+./scripts/config --disable KERNEL_UNCOMPRESSED
+
 # Confirmed distribution-wide ABI/runtime facts. Do not set HZ/NO_HZ/ASPM/
 # IOMMU/DMA/HDA power-save here: those values are not recovered yet.
 ./scripts/config --enable EXPERT
