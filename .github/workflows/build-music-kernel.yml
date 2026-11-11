@@ -33,7 +33,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc bison build-essential ccache flex git \
-            libelf-dev libssl-dev pahole perl python3 rsync tar xz-utils
+            libelf-dev libssl-dev pahole perl python3 rsync tar xz-utils zstd
 
       - name: 配置 ccache
         uses: actions/cache@v4
@@ -55,6 +55,61 @@ jobs:
           cd "linux-${KERNEL_VERSION}"
           MIGRATION_DIR="$GITHUB_WORKSPACE/kernel_config_migration_7.3.x"
           cp "$MIGRATION_DIR/config-7.3.x-rt-mod-daphile-final.conf" .config
+          
+          # Apply confirmed Daphile configuration.
+          
+          echo
+          echo "===== APPLY CONFIRMED CONFIGURATION ====="
+          
+          ./scripts/config --enable EXPERT
+          ./scripts/config --enable X86_64
+          ./scripts/config --enable SMP
+          ./scripts/config --enable PCI
+          ./scripts/config --enable INPUT
+          ./scripts/config --enable MODULES
+          ./scripts/config --enable MODULE_UNLOAD
+          
+          # PREEMPT_RT.
+          
+          ./scripts/config --enable PREEMPT_RT
+          ./scripts/config --enable HIGH_RES_TIMERS
+          
+          # ALSA core: built-in.
+          
+          ./scripts/config --enable SOUND
+          ./scripts/config --enable SND
+          ./scripts/config --enable SND_PCM
+          ./scripts/config --enable SND_TIMER
+          ./scripts/config --enable SND_HRTIMER
+          ./scripts/config --enable SND_ALOOP
+          ./scripts/config --enable SND_PCI
+          
+          # Intel HDA stack: modules.
+          
+          ./scripts/config --module SND_HDA
+          ./scripts/config --module SND_HDA_CORE
+          ./scripts/config --module SND_HDA_INTEL
+          ./scripts/config --module SND_HDA_GENERIC
+          ./scripts/config --module SND_HDA_CODEC_REALTEK
+          ./scripts/config --module SND_HDA_CODEC_HDMI
+          ./scripts/config --module SND_INTEL_DSP_CONFIG
+          
+          # Kernel compression: ZSTD.
+          
+          ./scripts/config --enable KERNEL_ZSTD
+          
+          # Kernel version suffix.
+          # Set suffix ONLY in .config.
+          # Do NOT pass LOCALVERSION to make later.
+          
+          ./scripts/config --set-str LOCALVERSION "$KERNEL_SUFFIX"
+          ./scripts/config --disable LOCALVERSION_AUTO
+          
+          # Resolve Kconfig dependencies.
+          
+          echo
+          echo "===== KCONFIG OLDDEFCONFIG ====="
+          
           make olddefconfig
 
       - name: 仅构建配置
