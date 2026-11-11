@@ -1,4 +1,5 @@
-name: Build Daphile 6.12.30 reconstruction
+
+name: Build Daphile 6.12.30 PREEMPT_RT Rebuild
 
 on:
   workflow_dispatch:
@@ -6,139 +7,444 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: daphile-6.12.30-rebuild
+  cancel-in-progress: false
+
 env:
   DAPHILE_DIR: 6.12.30-daphile
+  KERNEL_VERSION: 6.12.30
+  KERNEL_SUFFIX: -daphile-rebuild
 
 jobs:
   build:
-    name: 6.12.30 PREEMPT_RT reconstruction
+    name: Reconstruct and build Linux 6.12.30
     runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
     steps:
+
+      # --------------------------------------------------
+      # 1. Checkout
+      # --------------------------------------------------
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # --------------------------------------------------
+      # 2. Free disk space
+      # --------------------------------------------------
+
       - name: Free runner disk space
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          set -euo pipefail
+
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /usr/local/share/boost \
+            /opt/hostedtoolcache/CodeQL || true
+
           sudo apt-get clean
+
           df -h
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libncurses-dev bison flex \
-            libssl-dev libelf-dev bc xz-utils zstd cpio dwarves kmod perl
+      # --------------------------------------------------
+      # 3. Install dependencies
+      # --------------------------------------------------
 
-      - name: Download exact Linux 6.12.30 source
+      - name: Install kernel build dependencies
         run: |
           set -euo pipefail
-          wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.30.tar.xz
+
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            build-essential \
+            libncurses-dev \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            bc \
+            xz-utils \
+            zstd \
+            cpio \
+            dwarves \
+            kmod \
+            perl \
+            python3 \
+            rsync \
+            wget \
+            git
+
+      # --------------------------------------------------
+      # 4. Download exact Linux 6.12.30
+      # --------------------------------------------------
+
+      - name: Download Linux 6.12.30 source
+        run: |
+          set -euo pipefail
+
+          wget -q \
+            https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.30.tar.xz
+
           tar -xJf linux-6.12.30.tar.xz
+
+          test -f linux-6.12.30/Makefile
+
+          cd linux-6.12.30
+
+          make -s kernelversion
+
+      # --------------------------------------------------
+      # 5. Reconstruct configuration
+      # --------------------------------------------------
 
       - name: Reconstruct config from official module inventory
         working-directory: linux-6.12.30
         run: |
           set -euo pipefail
-          test -f "$GITHUB_WORKSPACE/$DAPHILE_DIR/daphile-6.12.30-official-modules.lsmod"
-          test -f "$GITHUB_WORKSPACE/$DAPHILE_DIR/daphile-6.12.30-official-builtin.lsmod"
-          bash "$GITHUB_WORKSPACE/$DAPHILE_DIR/reconstruct-daphile-6.12.30-config.sh"
-          cp .config "$GITHUB_WORKSPACE/config-6.12.30-daphile-rebuild.txt"
+
+          ROOT="$GITHUB_WORKSPACE/$DAPHILE_DIR"
+
+          test -f "$ROOT/daphile-6.12.30-official-modules.lsmod"
+          test -f "$ROOT/daphile-6.12.30-official-builtin.lsmod"
+          test -f "$ROOT/daphile-6.12.30-official-builtin.paths"
+          test -f "$ROOT/daphile-6.12.30-confirmed-v2.fragment"
+          test -f "$ROOT/reconstruct-daphile-6.12.30-config.sh"
+
+          export ARCH=x86
+
+          # Avoid EOF errors from interactive Kconfig reads.
+          # The empty answers select Kconfig defaults.
+          python3 - "$ROOT/reconstruct-daphile-6.12.30-config.sh" <<'PY'
+          import pathlib
+          import sys
+
+          p = pathlib.Path(sys.argv[1])
+          s = p.read_text()
+
+          replacements = {
+              'LSMOD="$BUILTINS" make localyesconfig':
+              'set +o pipefail\n'
+              'yes "" | env LSMOD="$BUILTINS" make localyesconfig\n'
+              'set -o pipefail',
+
+              'LSMOD="$MODS" make localmodconfig':
+              'set +o pipefail\n'
+              'yes "" | env LSMOD="$MODS" make localmodconfig\n'
+              'set -o pipefail',
+          }
+
+          for old, new in replacements.items():
+              count = s.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f"Expected exactly one occurrence of {old!r}, found {count}"
+                  )
+              s = s.replace(old, new)
+
+          p.write_text(s)
+          print("Patched Kconfig input handling successfully")
+          PY
+
+          # Execute the evidence-based reconstruction.
+          bash "$ROOT/reconstruct-daphile-6.12.30-config.sh"
+
+          test -s .config
+          test -s .config.daphile-6.12.30-reconstructed
+
+          cp .config "$GITHUB_WORKSPACE/config"
+
+          # ------------------------------------------------
+          # Verify important reconstructed values
+          # ------------------------------------------------
 
           require() {
-            local symbol="$1" value="$2"
-            grep -qx "${symbol}=${value}" .config || {
-              echo "::error::${symbol} expected ${value}, got $(grep -E "^${symbol}=" .config || echo unset)"
+            local symbol="$1"
+            local value="$2"
+
+            if ! grep -qx "${symbol}=${value}" .config; then
+              echo "::error::${symbol} expected ${value}"
+              grep -E "^${symbol}=" .config || true
               exit 1
-            }
+            fi
           }
-          require CONFIG_PREEMPT_RT y
+
+          require CONFIG_X86_64 y
           require CONFIG_SMP y
+          require CONFIG_EXPERT y
+          require CONFIG_PREEMPT_RT y
+
           require CONFIG_MODULES y
           require CONFIG_MODULE_UNLOAD y
+
+          require CONFIG_HIGH_RES_TIMERS y
+
           require CONFIG_SOUND y
           require CONFIG_SND y
           require CONFIG_SND_PCM y
           require CONFIG_SND_TIMER y
           require CONFIG_SND_HRTIMER y
           require CONFIG_SND_ALOOP y
+
+          require CONFIG_SND_HDA m
+          require CONFIG_SND_HDA_CORE m
           require CONFIG_SND_HDA_INTEL m
           require CONFIG_SND_HDA_GENERIC m
           require CONFIG_SND_HDA_CODEC_REALTEK m
           require CONFIG_SND_HDA_CODEC_HDMI m
-          require CONFIG_SND_HDA_CORE m
           require CONFIG_SND_INTEL_DSP_CONFIG m
 
-      - name: Build kernel and modules
-        working-directory: linux-6.12.30
-        run: make -j"$(nproc)" bzImage modules
+          require CONFIG_LOCALVERSION '"-daphile-rebuild"'
 
-      - name: Install modules to staging directory
+          # Verify kernel release.
+          KREL="$(make -s kernelrelease)"
+
+          echo "Kernel release: $KREL"
+
+          if [[ "$KREL" != "6.12.30-daphile-rebuild" ]]; then
+            echo "::error::Unexpected kernel release: $KREL"
+            exit 1
+          fi
+
+          # Save final config after olddefconfig.
+          cp .config "$GITHUB_WORKSPACE/config"
+
+          cp .config.daphile-6.12.30-reconstructed \
+            "$GITHUB_WORKSPACE/config-reconstructed-before-final.txt"
+
+          echo "Configuration verification passed."
+
+      # --------------------------------------------------
+      # 6. Build kernel
+      # --------------------------------------------------
+
+      - name: Build bzImage and modules
         working-directory: linux-6.12.30
         run: |
           set -euo pipefail
-          make INSTALL_MOD_PATH="$GITHUB_WORKSPACE/modules-staging" modules_install
-          test -d "$GITHUB_WORKSPACE/modules-staging/lib/modules/6.12.30-daphile-rebuild"
 
-      - name: Compare generated inventory with official package
+          export ARCH=x86
+
+          echo "=================================="
+          echo "Building Linux 6.12.30"
+          echo "=================================="
+
+          make -j"$(nproc)" bzImage modules
+
+          test -s arch/x86/boot/bzImage
+
+          ls -lh arch/x86/boot/bzImage
+
+      # --------------------------------------------------
+      # 7. Install modules
+      # --------------------------------------------------
+
+      - name: Install kernel modules
+        working-directory: linux-6.12.30
         run: |
           set -euo pipefail
-          MODDIR="$GITHUB_WORKSPACE/modules-staging/lib/modules/6.12.30-daphile-rebuild"
-          find "$MODDIR" -type f -name '*.ko' -printf '%f\n' \
-            | sed 's/\.ko$//' | tr '-' '_' | sort -u \
-            > "$GITHUB_WORKSPACE/built-modules.names"
-          tail -n +2 "$GITHUB_WORKSPACE/$DAPHILE_DIR/daphile-6.12.30-official-modules.lsmod" \
-            | awk '{print $1}' | sort -u \
+
+          KREL="$(make -s kernelrelease)"
+
+          STAGE="$GITHUB_WORKSPACE/modules-staging"
+
+          make INSTALL_MOD_PATH="$STAGE" modules_install
+
+          MODDIR="$STAGE/lib/modules/$KREL"
+
+          test -d "$MODDIR"
+          test -s "$MODDIR/modules.dep"
+          test -s "$MODDIR/modules.builtin"
+
+          # Remove build-time source links if present.
+          rm -f "$MODDIR/build" "$MODDIR/source"
+
+          # Regenerate module dependency metadata.
+          depmod -b "$STAGE" "$KREL"
+
+          echo "Installed module directory:"
+          du -sh "$MODDIR"
+
+      # --------------------------------------------------
+      # 8. Compare official inventory
+      # --------------------------------------------------
+
+      - name: Compare official module and builtin inventory
+        run: |
+          set -euo pipefail
+
+          ROOT="$GITHUB_WORKSPACE/$DAPHILE_DIR"
+
+          KREL="6.12.30-daphile-rebuild"
+
+          MODDIR="$GITHUB_WORKSPACE/modules-staging/lib/modules/$KREL"
+
+          # Official module names.
+          tail -n +2 \
+            "$ROOT/daphile-6.12.30-official-modules.lsmod" \
+            | awk '{print $1}' \
+            | sort -u \
             > "$GITHUB_WORKSPACE/official-modules.names"
-          comm -23 "$GITHUB_WORKSPACE/official-modules.names" "$GITHUB_WORKSPACE/built-modules.names" \
+
+          # Built module names.
+          find "$MODDIR" -type f \
+            \( -name '*.ko' -o -name '*.ko.xz' \
+               -o -name '*.ko.zst' -o -name '*.ko.gz' \) \
+            -printf '%f\n' \
+            | sed -E 's/\.ko(\.(xz|zst|gz))?$//' \
+            | tr '-' '_' \
+            | sort -u \
+            > "$GITHUB_WORKSPACE/built-modules.names"
+
+          # Compare module names.
+          comm -23 \
+            "$GITHUB_WORKSPACE/official-modules.names" \
+            "$GITHUB_WORKSPACE/built-modules.names" \
             > "$GITHUB_WORKSPACE/modules-missing-from-build.txt"
-          comm -13 "$GITHUB_WORKSPACE/official-modules.names" "$GITHUB_WORKSPACE/built-modules.names" \
+
+          comm -13 \
+            "$GITHUB_WORKSPACE/official-modules.names" \
+            "$GITHUB_WORKSPACE/built-modules.names" \
             > "$GITHUB_WORKSPACE/modules-extra-in-build.txt"
 
-          sort -u "$MODDIR/modules.builtin" > "$GITHUB_WORKSPACE/built-builtin.paths"
-          sort -u "$GITHUB_WORKSPACE/$DAPHILE_DIR/daphile-6.12.30-official-builtin.paths" \
+          # Official built-in object paths.
+          sort -u "$ROOT/daphile-6.12.30-official-builtin.paths" \
             > "$GITHUB_WORKSPACE/official-builtin.paths.sorted"
-          comm -23 "$GITHUB_WORKSPACE/official-builtin.paths.sorted" "$GITHUB_WORKSPACE/built-builtin.paths" \
+
+          # Newly generated built-in object paths.
+          sort -u "$MODDIR/modules.builtin" \
+            > "$GITHUB_WORKSPACE/built-builtin.paths"
+
+          comm -23 \
+            "$GITHUB_WORKSPACE/official-builtin.paths.sorted" \
+            "$GITHUB_WORKSPACE/built-builtin.paths" \
             > "$GITHUB_WORKSPACE/builtin-missing-from-build.txt"
-          comm -13 "$GITHUB_WORKSPACE/official-builtin.paths.sorted" "$GITHUB_WORKSPACE/built-builtin.paths" \
+
+          comm -13 \
+            "$GITHUB_WORKSPACE/official-builtin.paths.sorted" \
+            "$GITHUB_WORKSPACE/built-builtin.paths" \
             > "$GITHUB_WORKSPACE/builtin-extra-in-build.txt"
 
+          # Generate comparison report.
           {
-            echo "Official module count: $(wc -l < "$GITHUB_WORKSPACE/official-modules.names")"
-            echo "Built module count:    $(wc -l < "$GITHUB_WORKSPACE/built-modules.names")"
-            echo "Missing module names:  $(wc -l < "$GITHUB_WORKSPACE/modules-missing-from-build.txt")"
-            echo "Extra module names:    $(wc -l < "$GITHUB_WORKSPACE/modules-extra-in-build.txt")"
-            echo "Official builtin count: $(wc -l < "$GITHUB_WORKSPACE/official-builtin.paths.sorted")"
-            echo "Built builtin count:    $(wc -l < "$GITHUB_WORKSPACE/built-builtin.paths")"
-            echo "Missing builtin paths:  $(wc -l < "$GITHUB_WORKSPACE/builtin-missing-from-build.txt")"
-            echo "Extra builtin paths:    $(wc -l < "$GITHUB_WORKSPACE/builtin-extra-in-build.txt")"
+            echo "Daphile 6.12.30 inventory comparison"
+            echo "===================================="
+            echo
+            echo "Official modules: $(wc -l < "$GITHUB_WORKSPACE/official-modules.names")"
+            echo "Built modules: $(wc -l < "$GITHUB_WORKSPACE/built-modules.names")"
+            echo "Missing modules: $(wc -l < "$GITHUB_WORKSPACE/modules-missing-from-build.txt")"
+            echo "Extra modules: $(wc -l < "$GITHUB_WORKSPACE/modules-extra-in-build.txt")"
+            echo
+            echo "Official builtins: $(wc -l < "$GITHUB_WORKSPACE/official-builtin.paths.sorted")"
+            echo "Built builtins: $(wc -l < "$GITHUB_WORKSPACE/built-builtin.paths")"
+            echo "Missing builtins: $(wc -l < "$GITHUB_WORKSPACE/builtin-missing-from-build.txt")"
+            echo "Extra builtins: $(wc -l < "$GITHUB_WORKSPACE/builtin-extra-in-build.txt")"
           } | tee "$GITHUB_WORKSPACE/inventory-comparison.txt"
 
-      - name: Package modules
+          echo
+          echo "Missing module examples:"
+          head -n 30 "$GITHUB_WORKSPACE/modules-missing-from-build.txt"
+
+          echo
+          echo "Missing builtin examples:"
+          head -n 30 "$GITHUB_WORKSPACE/builtin-missing-from-build.txt"
+
+      # --------------------------------------------------
+      # 9. Package modules
+      # --------------------------------------------------
+
+      - name: Package modules.tar.gz
         run: |
           set -euo pipefail
-          cd "$GITHUB_WORKSPACE/modules-staging/lib/modules"
-          tar --numeric-owner -czf "$GITHUB_WORKSPACE/modules-6.12.30-daphile-rebuild.tar.gz" 6.12.30-daphile-rebuild
-          ls -lh "$GITHUB_WORKSPACE/modules-6.12.30-daphile-rebuild.tar.gz"
 
-      - name: Publish build artifacts
+          KREL="6.12.30-daphile-rebuild"
+
+          STAGE="$GITHUB_WORKSPACE/modules-staging"
+
+          cd "$STAGE/lib/modules"
+
+          tar \
+            --numeric-owner \
+            -czf "$GITHUB_WORKSPACE/modules.tar.gz" \
+            "$KREL"
+
+          ls -lh "$GITHUB_WORKSPACE/modules.tar.gz"
+
+      # --------------------------------------------------
+      # 10. Prepare final artifacts
+      # --------------------------------------------------
+
+      - name: Prepare release artifacts
+        working-directory: linux-6.12.30
+        run: |
+          set -euo pipefail
+
+          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/bzImage"
+
+          test -s "$GITHUB_WORKSPACE/bzImage"
+          test -s "$GITHUB_WORKSPACE/config"
+          test -s "$GITHUB_WORKSPACE/modules.tar.gz"
+          test -s "$GITHUB_WORKSPACE/inventory-comparison.txt"
+
+          echo "=================================="
+          echo "Release artifacts"
+          echo "=================================="
+
+          ls -lh \
+            "$GITHUB_WORKSPACE/bzImage" \
+            "$GITHUB_WORKSPACE/config" \
+            "$GITHUB_WORKSPACE/modules.tar.gz" \
+            "$GITHUB_WORKSPACE/inventory-comparison.txt"
+
+      # --------------------------------------------------
+      # 11. Publish GitHub Release
+      # --------------------------------------------------
+
+      - name: Create Release and upload
         uses: ncipollo/release-action@v1
         with:
-          allowUpdates: true
-          artifactErrorsFailBuild: true
           token: ${{ secrets.GITHUB_TOKEN }}
+
           tag: kernel-6.12.30-daphile-rebuild
-          name: Daphile 6.12.30 PREEMPT_RT reconstruction
+
+          name: Daphile 6.12.30 PREEMPT_RT Rebuild
+
+          commit: ${{ github.sha }}
+
+          allowUpdates: true
+          replacesArtifacts: true
+          artifactErrorsFailBuild: true
+          makeLatest: false
+
           body: |
-            Reconstructed from the official Daphile 6.12.30 kernel image and module inventory.
-            This is a test kernel; keep the original 6.12.30-daphile kernel as fallback.
-            Review config and inventory comparison before installation.
+            Daphile Linux 6.12.30 PREEMPT_RT reconstructed kernel.
+
+            Architecture: x86_64
+            Kernel: Linux 6.12.30
+            PREEMPT_RT: enabled
+            Local version: -daphile-rebuild
+
+            Configuration reconstructed using:
+            - Official Daphile module inventory
+            - Official modules.builtin inventory
+            - Evidence-backed Kconfig fragment
+
+            Important:
+            This is a reconstructed configuration, not the original
+            byte-for-byte Daphile configuration.
+
+            Keep the original 6.12.30-daphile kernel as fallback.
+
           artifacts: |
-            ${{ github.workspace }}/linux-6.12.30/arch/x86/boot/bzImage
-            ${{ github.workspace }}/config-6.12.30-daphile-rebuild.txt
-            ${{ github.workspace }}/modules-6.12.30-daphile-rebuild.tar.gz
-            ${{ github.workspace }}/inventory-comparison.txt
-            ${{ github.workspace }}/modules-missing-from-build.txt
-            ${{ github.workspace }}/modules-extra-in-build.txt
-            ${{ github.workspace }}/builtin-missing-from-build.txt
-            ${{ github.workspace }}/builtin-extra-in-build.txt
+            bzImage
+            config
+            modules.tar.gz
+            inventory-comparison.txt
+            modules-missing-from-build.txt
+            modules-extra-in-build.txt
+            builtin-missing-from-build.txt
+            builtin-extra-in-build.txt
