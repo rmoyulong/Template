@@ -50,11 +50,12 @@ jobs:
                | grep -q "F8D2 585B 8783 D481"; then
             sudo mkdir -p /root/.gnupg
             sudo chmod 700 /root/.gnupg
-            sudo gpg --homedir /root/.gnupg \
-                     --no-default-keyring \
-                     --keyring /usr/share/keyrings/debian-archive-keyring.gpg \
-                     --keyserver hkps://keyserver.ubuntu.com \
-                     --recv-keys 4D64FEC119C2029067D6E791F8D2585B8783D481
+            curl -fsSL --connect-timeout 10 \
+              "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x4D64FEC119C2029067D6E791F8D2585B8783D481" \
+              | sudo gpg --homedir /root/.gnupg \
+                         --no-default-keyring \
+                         --keyring /usr/share/keyrings/debian-archive-keyring.gpg \
+                         --import
           fi
 
       - name: Debootstrap base system
