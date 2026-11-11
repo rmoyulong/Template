@@ -46,16 +46,16 @@ jobs:
       - name: Ensure bookworm archive key present
         run: |
           set -euo pipefail
-          if ! gpg --show-keys --with-fingerprint /usr/share/keyrings/debian-archive-keyring.gpg 2>/dev/null \
-               | grep -q "F8D2 585B 8783 D481"; then
-            sudo mkdir -p /root/.gnupg
-            sudo chmod 700 /root/.gnupg
-            sudo gpg --homedir /root/.gnupg \
-                     --no-default-keyring \
-                     --keyring /usr/share/keyrings/debian-archive-keyring.gpg \
-                     --keyserver hkp://keyserver.ubuntu.com:80 \
-                     --recv-keys 4D64FEC119C2029067D6E791F8D2585B8783D481
-                      fi
+          # 1. 下载包含 Debian 归档密钥的 deb 包（使用你环境中的镜像地址或官方源）
+          # 这里以清华镜像为例，你也可以用 ftp.cn.debian.org 的对应路径
+          KEYRING_DEB="/tmp/debian-archive-keyring.deb"
+          wget -q "https://mirrors.tuna.tsinghua.edu.cn/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2023.3+deb12u2_all.deb" -O "$KEYRING_DEB"
+          
+          # 2. 安装该 deb 包，这会自动把密钥文件放入 /usr/share/keyrings/
+          sudo dpkg -i "$KEYRING_DEB" || sudo apt-get install -f -y
+          
+          # 3. 验证密钥是否已就位（现在应该能通过检查了）
+          gpg --show-keys --with-fingerprint /usr/share/keyrings/debian-archive-keyring.gpg 2>/dev/null | grep -q "F8D2 585B 8783 D481"
 
       - name: Debootstrap base system
         run: |
