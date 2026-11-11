@@ -6,7 +6,7 @@ on:
       kernel_version:
         description: 'Kernel version (must match modules/bzImage)'
         required: false
-        default: '7.3.3'
+        default: '7.3.4'
   push:
     tags:
       - 'img-*'
