@@ -16,6 +16,7 @@ env:
   KERNEL_VERSION: 6.12.30
   KERNEL_SUFFIX: -daphile-rebuild
   KERNEL_RELEASE: 6.12.30-daphile-rebuild
+  BUILD_JOBS: 3
 
 jobs:
   build:
@@ -107,7 +108,17 @@ jobs:
               python3 \
               rsync \
               wget \
-              git
+              git \
+              ccache
+
+      - name: 配置 ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: linux-dephile-x86_64-${{ runner.os }}-${{ github.ref }}
+          restore-keys: |
+            linux-dephile-x86_64-${{ runner.os }}-
+
 
       # --------------------------------------------------
       # 4. Download exact Linux 6.12.30
@@ -521,6 +532,8 @@ jobs:
         working-directory: linux-6.12.30
         run: |
           set -euo pipefail
+          export CC="ccache gcc"
+          ccache -M 3G
 
           export ARCH=x86
 
@@ -541,7 +554,7 @@ jobs:
             exit 1
           fi
 
-          make -j"$(nproc)" bzImage modules
+          make -j"${BUILD_JOBS}" bzImage modules
 
           test -s arch/x86/boot/bzImage
 
