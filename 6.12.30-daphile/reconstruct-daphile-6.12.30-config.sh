@@ -106,6 +106,14 @@ scripts/config --disable LOCALVERSION_AUTO
 # The official built-in inventory contains vesafb, whose Kconfig symbol is bool.
 scripts/config --enable FB_VESA
 
+# Restore dependencies required by official built-in NFS/cachefiles objects.
+# cachefiles requires FSCACHE; nfs_acl is selected by NFS_V3_ACL.
+scripts/config --enable FSCACHE
+scripts/config --enable NFS_V3_ACL
+
+# The official built-in nfsv4 object was probed with NFSv4.1/pNFS enabled.
+scripts/config --enable NFS_V4_1
+
 # The official loadable-module inventory contains intel_atomisp2_pm but no
 # atomisp module. INTEL_ATOMISP is a menu bool left enabled by allmodconfig;
 # it conflicts with INTEL_ATOMISP2_PM (depends on !INTEL_ATOMISP).
@@ -183,6 +191,7 @@ sha256sum "$OUT/config.candidate" | tee "$OUT/config.sha256"
   echo
   echo "[Inventory-backed driver corrections]"
   grep -E '^(CONFIG_(FB_VESA|VIDEO|BRCMFMAC|BRCMFMAC_SDIO|BRCMFMAC_USB|BRCMFMAC_PCIE|INTEL_ATOMISP2_PM))=' .config || true
+  grep -E '^(CONFIG_(FSCACHE|CACHEFILES|NFS_V3_ACL|NFS_ACL_SUPPORT|NFS_V4_1|PNFS_BLOCK|PNFS_FILE_LAYOUT|PNFS_FLEXFILE_LAYOUT))=' .config || true
   grep -E '^# CONFIG_INTEL_ATOMISP is not set$' .config || true
   echo
   echo "[Known module-name mapping warnings]"
@@ -219,6 +228,14 @@ if grep -qx 'CONFIG_X86_VSMP=y' .config; then
 fi
 grep -qx 'CONFIG_X86_INTEL_TSX_MODE_AUTO=y' .config
 grep -qx 'CONFIG_FB_VESA=y' .config
+grep -qx 'CONFIG_FSCACHE=y' .config
+grep -qx 'CONFIG_CACHEFILES=y' .config
+grep -qx 'CONFIG_NFS_V3_ACL=y' .config
+grep -qx 'CONFIG_NFS_ACL_SUPPORT=y' .config
+grep -qx 'CONFIG_NFS_V4_1=y' .config
+grep -qx 'CONFIG_PNFS_BLOCK=y' .config
+grep -qx 'CONFIG_PNFS_FILE_LAYOUT=y' .config
+grep -qx 'CONFIG_PNFS_FLEXFILE_LAYOUT=y' .config
 grep -qx 'CONFIG_INTEL_ATOMISP2_PM=m' .config
 if grep -qx 'CONFIG_INTEL_ATOMISP=y' .config; then
   echo "ERROR: CONFIG_INTEL_ATOMISP conflicts with inventory-backed intel_atomisp2_pm module" >&2
