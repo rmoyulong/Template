@@ -489,11 +489,14 @@ jobs:
             fi
           }
           
+          # MODULE_SIG may remain enabled in permissive mode: unsigned modules
+          # are loadable when MODULE_SIG_FORCE and MODULE_SIG_ALL are disabled.
+          # Reject forced verification, automatic signing, and IMA modsig appraisal.
           # Module signing verification
-          # Verify module signing is fully disabled.
-          if grep -qE '^CONFIG_MODULE_SIG(_ALL|_FORCE)?=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config; then
+          # Verify modules are not required to be signed or automatically signed.
+          if grep -qE '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config; then
             echo "::error::Module-signature option remains enabled:"
-            grep -E '^CONFIG_MODULE_SIG(_ALL|_FORCE)?=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config || true
+            grep -E '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config || true
             exit 1
           fi
 
@@ -930,11 +933,110 @@ jobs:
           grep -q '^CONFIG_HZ_250=y$' "$GITHUB_WORKSPACE/config"
           grep -q '^CONFIG_HZ=250$' "$GITHUB_WORKSPACE/config"
 
-          if grep -qE '^CONFIG_MODULE_SIG(_ALL|_FORCE)?=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' "$GITHUB_WORKSPACE/config"; then
+          if grep -qE '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' "$GITHUB_WORKSPACE/config"; then
             echo "::error::Module-signature option unexpectedly enabled in exported config:"
-            grep -E '^CONFIG_MODULE_SIG(_ALL|_FORCE)?=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' "$GITHUB_WORKSPACE/config" || true
+            grep -E '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' "$GITHUB_WORKSPACE/config" || true
             exit 1
-          fi          grep -q '^CONFIG_SYSTEM_TRUSTED_KEYS=""$' "$GITHUB_WORKSPACE/config"
+          fi
+
+          grep -q '^CONFIG_SYSTEM_TRUSTED_KEYS=""
+          grep -q '^CONFIG_SYSTEM_REVOCATION_KEYS=""$' "$GITHUB_WORKSPACE/config"
+
+          grep -q '^CONFIG_LOCALVERSION="-daphile-rebuild"$' "$GITHUB_WORKSPACE/config"
+
+          # Generate SHA256 checksums.
+
+          cd "$GITHUB_WORKSPACE"
+
+          sha256sum \
+            bzImage \
+            config \
+            modules.tar.gz \
+            depmod-debug.log \
+            depmod-dry-run.txt \
+            inventory-comparison.txt \
+            > SHA256SUMS.txt
+
+          echo "=================================="
+          echo "Release artifacts"
+          echo "=================================="
+
+          ls -lh \
+            bzImage \
+            config \
+            modules.tar.gz \
+            depmod-debug.log \
+            depmod-dry-run.txt \
+            inventory-comparison.txt \
+            SHA256SUMS.txt
+
+          echo
+          echo "Final kernel compression:"
+          grep '^CONFIG_KERNEL_ZSTD=y$' config
+
+          echo
+          echo "Final kernel version:"
+          grep '^CONFIG_LOCALVERSION=' config
+
+          echo
+          echo "SHA256:"
+          cat SHA256SUMS.txt
+
+      # --------------------------------------------------
+      # 11. Publish GitHub Release
+      # --------------------------------------------------
+
+      - name: Create Release and upload
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+          tag: kernel-6.12.30-daphile-rebuild
+
+          name: Daphile 6.12.30 PREEMPT_RT Rebuild
+
+          commit: ${{ github.sha }}
+
+          allowUpdates: true
+          replacesArtifacts: true
+          artifactErrorsFailBuild: true
+          makeLatest: false
+
+          body: |
+            Daphile Linux 6.12.30 PREEMPT_RT reconstructed kernel.
+
+            Architecture: x86_64
+            Kernel: Linux 6.12.30
+            Kernel release: 6.12.30-daphile-rebuild
+
+            PREEMPT_RT: enabled
+            Kernel compression: ZSTD
+            Local version: -daphile-rebuild
+
+            Configuration reconstructed using:
+            - Official Daphile module inventory
+            - Official modules.builtin inventory
+            - Evidence-backed Kconfig fragment
+
+            Important:
+            This is a reconstructed configuration, not the original
+            byte-for-byte Daphile configuration.
+
+            Keep the original 6.12.30-daphile kernel as fallback.
+
+          artifacts: |
+            bzImage
+            config
+            modules.tar.gz
+            depmod-debug.log
+            depmod-dry-run.txt
+            inventory-comparison.txt
+            modules-missing-from-build.txt
+            modules-extra-in-build.txt
+            builtin-missing-from-build.txt
+            builtin-extra-in-build.txt
+            SHA256SUMS.txt
+ "$GITHUB_WORKSPACE/config"
           grep -q '^CONFIG_SYSTEM_REVOCATION_KEYS=""$' "$GITHUB_WORKSPACE/config"
 
           grep -q '^CONFIG_LOCALVERSION="-daphile-rebuild"$' "$GITHUB_WORKSPACE/config"
