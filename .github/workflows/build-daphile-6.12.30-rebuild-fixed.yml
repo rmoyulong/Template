@@ -332,7 +332,19 @@ jobs:
           ./scripts/config --enable MODULE_SIG
           ./scripts/config --enable MODULE_SIG_ALL
           ./scripts/config --enable MODULE_SIG_FORCE
+
+          # MODULE_SIG_SHA* are members of one Kconfig choice. Explicitly
+          # clear every competing choice value inherited from reconstructed
+          # fragments before selecting SHA-256.
+          ./scripts/config --disable MODULE_SIG_SHA1
+          ./scripts/config --disable MODULE_SIG_SHA224
+          ./scripts/config --disable MODULE_SIG_SHA384
+          ./scripts/config --disable MODULE_SIG_SHA512
+          ./scripts/config --disable MODULE_SIG_SHA3_256
+          ./scripts/config --disable MODULE_SIG_SHA3_384
+          ./scripts/config --disable MODULE_SIG_SHA3_512
           ./scripts/config --enable MODULE_SIG_SHA256
+
           ./scripts/config --set-str MODULE_SIG_KEY "certs/signing_key.pem"
           ./scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
 
@@ -490,6 +502,7 @@ jobs:
           require_config CONFIG_MODULE_SIG_FORCE y
           require_config CONFIG_MODULE_SIG_ALL y
           require_config CONFIG_MODULE_SIG_SHA256 y
+          require_config CONFIG_MODULE_SIG_HASH '"sha256"'
           require_config CONFIG_MODULE_SIG_KEY '"certs/signing_key.pem"'
           require_config CONFIG_SYSTEM_TRUSTED_KEYS '""'
 
