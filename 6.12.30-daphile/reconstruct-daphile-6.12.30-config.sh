@@ -179,8 +179,18 @@ sha256sum "$OUT/config.candidate" | tee "$OUT/config.sha256"
   grep -E '^(CONFIG_(PREEMPT_RT|HIGH_RES_TIMERS|HZ_250|HZ|KERNEL_ZSTD|LOCALVERSION|LOCALVERSION_AUTO|MODULE_SIG_ALL|MODULE_SIG_FORCE|SYSTEM_TRUSTED_KEYS|SYSTEM_REVOCATION_KEYS))=' .config || true
   echo
   echo "[Known original values restored]"
-  grep -E '^(CONFIG_NR_CPUS=[0-9]+|CONFIG_X86_INTERNODE_CACHE_SHIFT=[0-9]+|CONFIG_X86_INTEL_TSX_MODE_AUTO=y)
-  echo "[Known original options expected unset]"
+  grep -E '^(CONFIG_NR_CPUS=[0-9]+|CONFIG_X86_INTERNODE_CACHE_SHIFT=[0-9]+|CONFIG_X86_INTEL_TSX_MODE_AUTO=y)$' .config || true
+  echo
+  echo "[Inventory-backed driver corrections]"
+  grep -E '^(CONFIG_(FB_VESA|VIDEO|BRCMFMAC|BRCMFMAC_SDIO|BRCMFMAC_USB|BRCMFMAC_PCIE|INTEL_ATOMISP2_PM))=' .config || true
+  grep -E '^# CONFIG_INTEL_ATOMISP is not set$' .config || true
+  echo
+  echo "[Known module-name mapping warnings]"
+  echo "vesafb -> CONFIG_FB_VESA (bool; explicitly enabled from official built-in inventory)"
+  echo "brcmfmac_bca/brcmfmac_cyw/brcmfmac_wcc -> CONFIG_BRCMFMAC and its bus options"
+  echo "intel_atomisp2_pm -> CONFIG_INTEL_ATOMISP2_PM (explicit module setting; INTEL_ATOMISP disabled)"
+  echo "video_common -> CONFIG_VIDEO=y is present; exact module-name mapping remains unverified"
+  echo
   grep -E '^# CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF) is not set$' .config || true
   echo
   echo "[Unsupported optional tracing selector disabled]"
@@ -214,7 +224,7 @@ if grep -qx 'CONFIG_INTEL_ATOMISP=y' .config; then
   exit 1
 fi
 
-if grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y
+if grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config; then
   echo "ERROR: a known-original-unset option or unsupported BOOT_CONFIG selector is enabled:" >&2
   grep -E '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config >&2
   exit 1
