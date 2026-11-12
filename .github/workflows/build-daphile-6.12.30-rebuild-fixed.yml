@@ -1,4 +1,3 @@
-
 name: Build Daphile 6.12.30 PREEMPT_RT Rebuild
 
 on:
@@ -299,12 +298,6 @@ jobs:
           ./scripts/config --enable MODULES
           ./scripts/config --enable MODULE_UNLOAD
 
-          # Module signing: sign every loadable module with the build-generated key.
-          ./scripts/config --enable MODULE_SIG
-          ./scripts/config --enable MODULE_SIG_ALL
-          ./scripts/config --enable MODULE_SIG_SHA256
-          ./scripts/config --set-str MODULE_SIG_KEY "certs/signing_key.pem"
-
           # PREEMPT_RT.
 
           ./scripts/config --enable PREEMPT_RT
@@ -333,6 +326,15 @@ jobs:
           # Kernel compression: ZSTD.
 
           ./scripts/config --enable KERNEL_ZSTD
+
+          # Module signing: use the kernel's generated key pair.
+          # The private key remains inside the build workspace and is never released.
+          ./scripts/config --enable MODULE_SIG
+          ./scripts/config --enable MODULE_SIG_ALL
+          ./scripts/config --enable MODULE_SIG_FORCE
+          ./scripts/config --enable MODULE_SIG_SHA256
+          ./scripts/config --set-str MODULE_SIG_KEY "certs/signing_key.pem"
+          ./scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
 
           # Kernel version suffix.
           # Set suffix ONLY in .config.
@@ -482,15 +484,20 @@ jobs:
               exit 1
             fi
           }
+          
+          # Module signing verification
+          require_config CONFIG_MODULE_SIG y
+          require_config CONFIG_MODULE_SIG_FORCE y
+          require_config CONFIG_MODULE_SIG_ALL y
+          require_config CONFIG_MODULE_SIG_SHA256 y
+          require_config CONFIG_MODULE_SIG_KEY '"certs/signing_key.pem"'
+          require_config CONFIG_SYSTEM_TRUSTED_KEYS '""'
 
           require_config CONFIG_X86_64 y
           require_config CONFIG_SMP y
           require_config CONFIG_PREEMPT_RT y
           require_config CONFIG_MODULES y
           require_config CONFIG_MODULE_UNLOAD y
-          require_config CONFIG_MODULE_SIG y
-          require_config CONFIG_MODULE_SIG_ALL y
-          require_config CONFIG_MODULE_SIG_SHA256 y
           require_config CONFIG_HIGH_RES_TIMERS y
 
           require_config CONFIG_LOCALVERSION '"-daphile-rebuild"'
@@ -682,6 +689,50 @@ jobs:
             exit 1
           fi
 
+          # Verify signature metadata for all installed HDA modules after
+          # compression normalization. Actual trust validation is performed
+          # by the kernel when it loads a module.
+          echo
+          echo "===== HDA MODULE SIGNATURE VERIFICATION ====="
+          HDA_REPORT="$GITHUB_WORKSPACE/hda-module-signatures.txt"
+          HDA_LIST="$GITHUB_WORKSPACE/hda-module-files.list"
+          : > "$HDA_REPORT"
+
+          find "$MODDIR/kernel/sound" -type f -name '*.ko' \
+            \( -path '*/hda/*.ko' -o -path '*/pci/hda/*.ko' \) \
+            -print0 > "$HDA_LIST"
+
+          HDA_COUNT=0
+          while IFS= read -r -d '' HDA_MODULE; do
+            HDA_COUNT=$((HDA_COUNT + 1))
+            MODULE_NAME="$(basename "$HDA_MODULE")"
+            SIGNER="$(modinfo -F signer "$HDA_MODULE" 2>/dev/null || true)"
+            SIG_KEY="$(modinfo -F sig_key "$HDA_MODULE" 2>/dev/null || true)"
+            SIG_HASH="$(modinfo -F sig_hashalgo "$HDA_MODULE" 2>/dev/null || true)"
+
+            if [[ -z "$SIGNER" || -z "$SIG_KEY" ]]; then
+              echo "::error::HDA module is missing signature metadata: $MODULE_NAME"
+              exit 1
+            fi
+
+            {
+              echo "Module: $MODULE_NAME"
+              echo "Path: ${HDA_MODULE#"$MODDIR"/}"
+              echo "Signer: $SIGNER"
+              echo "Key ID: $SIG_KEY"
+              echo "Hash algorithm: $SIG_HASH"
+              echo
+            } | tee -a "$HDA_REPORT"
+          done < "$HDA_LIST"
+
+          if [[ "$HDA_COUNT" -eq 0 ]]; then
+            echo "::error::No HDA modules found in the installed module tree"
+            exit 1
+          fi
+
+          echo "Verified signature metadata for $HDA_COUNT HDA modules"
+          cat "$HDA_REPORT"
+
           echo
           echo "===== METADATA BEFORE DEPmod ====="
           for FILE in modules.dep modules.builtin modules.order; do
@@ -752,23 +803,7 @@ jobs:
           df -h "$GITHUB_WORKSPACE"
 
       # --------------------------------------------------
-      # 8. Verify module signing certificate and HDA signatures
-      # --------------------------------------------------
-
-      - name: Verify module signing certificate and HDA signatures
-        working-directory: linux-6.12.30
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-
-          KREL="$KERNEL_RELEASE"
-          MODDIR="$GITHUB_WORKSPACE/modules-staging/lib/modules/$KREL"
-          CERT="certs/signing_key.x509"
-          REPORT="$GITHUB_WORKSPACE/hda-module-signature.txt"
-
-          echo "===== MODULE SIGNING CONFIG ====="
-          grep -E '^(CONFIG_MODULE_SIG|CONFIG_MODULE_SIG_ALL|CONFIG_MODULE_SIG_SHA256|CONFIG_MODULE_SIG_KEY)=' .config
-          grep -q '^CONFIG_MODULE_SIG=y
+      # 8. Compare official inventory
       # --------------------------------------------------
 
       - name: Compare official module and builtin inventory
@@ -914,19 +949,34 @@ jobs:
 
           cp .config "$GITHUB_WORKSPACE/config"
 
-          # Export the public module-signing certificate.
-          cp certs/signing_key.x509 "$GITHUB_WORKSPACE/signing_key.x509"
-
           # Verify artifacts.
 
-          test -s "$GITHUB_WORKSPACE/signing_key.x509"
-          test -s "$GITHUB_WORKSPACE/hda-module-signature.txt"
           test -s "$GITHUB_WORKSPACE/bzImage"
           test -s "$GITHUB_WORKSPACE/config"
           test -s "$GITHUB_WORKSPACE/modules.tar.gz"
           test -f "$GITHUB_WORKSPACE/depmod-debug.log"
           test -f "$GITHUB_WORKSPACE/depmod-dry-run.txt"
           test -s "$GITHUB_WORKSPACE/inventory-comparison.txt"
+          
+          echo "===== EXPORT PUBLIC SIGNING CERTIFICATE ====="
+
+          if [[ -s certs/signing_key.x509 ]]; then
+            cp certs/signing_key.x509 \
+              "$GITHUB_WORKSPACE/signing_key.x509"
+            openssl x509 -inform DER \
+              -in "$GITHUB_WORKSPACE/signing_key.x509" \
+              -noout -subject -fingerprint -sha256 \
+              > "$GITHUB_WORKSPACE/signing-cert-info.txt"
+            echo "Public signing certificate exported and parsed"
+          else
+            echo "::error::certs/signing_key.x509 not found after kernel build"
+            exit 1
+          fi
+
+          test -s "$GITHUB_WORKSPACE/hda-module-signatures.txt"
+          test -s "$GITHUB_WORKSPACE/signing-cert-info.txt"
+
+          # Do not copy or publish certs/signing_key.pem (the private key).
 
           # Verify final configuration.
 
@@ -947,12 +997,13 @@ jobs:
             depmod-debug.log \
             depmod-dry-run.txt \
             inventory-comparison.txt \
-            signing_key.x509 \
-            hda-module-signature.txt \
             modules-missing-from-build.txt \
             modules-extra-in-build.txt \
             builtin-missing-from-build.txt \
             builtin-extra-in-build.txt \
+            signing_key.x509 \
+            signing-cert-info.txt \
+            hda-module-signatures.txt \
             > SHA256SUMS.txt
 
           echo "=================================="
@@ -966,6 +1017,13 @@ jobs:
             depmod-debug.log \
             depmod-dry-run.txt \
             inventory-comparison.txt \
+            modules-missing-from-build.txt \
+            modules-extra-in-build.txt \
+            builtin-missing-from-build.txt \
+            builtin-extra-in-build.txt \
+            signing_key.x509 \
+            signing-cert-info.txt \
+            hda-module-signatures.txt \
             SHA256SUMS.txt
 
           echo
@@ -1020,6 +1078,9 @@ jobs:
             This is a reconstructed configuration, not the original
             byte-for-byte Daphile configuration.
 
+            HDA modules were checked for signature metadata.
+            signing_key.x509 is the public certificate for this build's module key.
+            The private signing key is not included in this release.
             Keep the original 6.12.30-daphile kernel as fallback.
 
           artifacts: |
@@ -1030,816 +1091,8 @@ jobs:
             depmod-dry-run.txt
             inventory-comparison.txt
             signing_key.x509
-            hda-module-signature.txt
-            modules-missing-from-build.txt
-            modules-extra-in-build.txt
-            builtin-missing-from-build.txt
-            builtin-extra-in-build.txt
-            SHA256SUMS.txt
- .config
-          grep -q '^CONFIG_MODULE_SIG_ALL=y
-      # --------------------------------------------------
-
-      - name: Compare official module and builtin inventory
-        run: |
-          set -euo pipefail
-
-          ROOT="$GITHUB_WORKSPACE/$DAPHILE_DIR"
-
-          KREL="$KERNEL_RELEASE"
-
-          MODDIR="$GITHUB_WORKSPACE/modules-staging/lib/modules/$KREL"
-
-          test -d "$MODDIR"
-
-          # Official module names.
-
-          tail -n +2 \
-            "$ROOT/daphile-6.12.30-official-modules.lsmod" \
-            | awk '{print $1}' \
-            | sort -u \
-            > "$GITHUB_WORKSPACE/official-modules.names"
-
-          # Built module names.
-
-          find "$MODDIR" -type f \
-            \( -name '*.ko' -o -name '*.ko.xz' \
-               -o -name '*.ko.zst' -o -name '*.ko.gz' \) \
-            -printf '%f\n' \
-            | sed -E 's/\.ko(\.(xz|zst|gz))?$//' \
-            | tr '-' '_' \
-            | sort -u \
-            > "$GITHUB_WORKSPACE/built-modules.names"
-
-          # Compare module names.
-
-          comm -23 \
-            "$GITHUB_WORKSPACE/official-modules.names" \
-            "$GITHUB_WORKSPACE/built-modules.names" \
-            > "$GITHUB_WORKSPACE/modules-missing-from-build.txt"
-
-          comm -13 \
-            "$GITHUB_WORKSPACE/official-modules.names" \
-            "$GITHUB_WORKSPACE/built-modules.names" \
-            > "$GITHUB_WORKSPACE/modules-extra-in-build.txt"
-
-          # Official built-in object paths.
-
-          sort -u "$ROOT/daphile-6.12.30-official-builtin.paths" \
-            > "$GITHUB_WORKSPACE/official-builtin.paths.sorted"
-
-          # Newly generated built-in object paths.
-
-          sort -u "$MODDIR/modules.builtin" \
-            > "$GITHUB_WORKSPACE/built-builtin.paths"
-
-          comm -23 \
-            "$GITHUB_WORKSPACE/official-builtin.paths.sorted" \
-            "$GITHUB_WORKSPACE/built-builtin.paths" \
-            > "$GITHUB_WORKSPACE/builtin-missing-from-build.txt"
-
-          comm -13 \
-            "$GITHUB_WORKSPACE/official-builtin.paths.sorted" \
-            "$GITHUB_WORKSPACE/built-builtin.paths" \
-            > "$GITHUB_WORKSPACE/builtin-extra-in-build.txt"
-
-          # Generate comparison report.
-
-          {
-            echo "Daphile 6.12.30 inventory comparison"
-            echo "===================================="
-            echo
-            echo "Kernel release: $KREL"
-            echo
-            echo "Official modules: $(wc -l < "$GITHUB_WORKSPACE/official-modules.names")"
-            echo "Built modules: $(wc -l < "$GITHUB_WORKSPACE/built-modules.names")"
-            echo "Missing modules: $(wc -l < "$GITHUB_WORKSPACE/modules-missing-from-build.txt")"
-            echo "Extra modules: $(wc -l < "$GITHUB_WORKSPACE/modules-extra-in-build.txt")"
-            echo
-            echo "Official builtins: $(wc -l < "$GITHUB_WORKSPACE/official-builtin.paths.sorted")"
-            echo "Built builtins: $(wc -l < "$GITHUB_WORKSPACE/built-builtin.paths")"
-            echo "Missing builtins: $(wc -l < "$GITHUB_WORKSPACE/builtin-missing-from-build.txt")"
-            echo "Extra builtins: $(wc -l < "$GITHUB_WORKSPACE/builtin-extra-in-build.txt")"
-          } | tee "$GITHUB_WORKSPACE/inventory-comparison.txt"
-
-          echo
-          echo "Missing module examples:"
-          head -n 30 "$GITHUB_WORKSPACE/modules-missing-from-build.txt"
-
-          echo
-          echo "Missing builtin examples:"
-          head -n 30 "$GITHUB_WORKSPACE/builtin-missing-from-build.txt"
-
-      # --------------------------------------------------
-      # 9. Package modules
-      # --------------------------------------------------
-
-      - name: Package modules.tar.gz
-        run: |
-          set -euo pipefail
-
-          KREL="$KERNEL_RELEASE"
-
-          STAGE="$GITHUB_WORKSPACE/modules-staging"
-
-          MODDIR="$STAGE/lib/modules/$KREL"
-
-          test -d "$MODDIR"
-          test -s "$MODDIR/modules.dep"
-          test -s "$MODDIR/modules.builtin"
-
-          cd "$STAGE/lib/modules"
-
-          tar \
-            --numeric-owner \
-            -czf "$GITHUB_WORKSPACE/modules.tar.gz" \
-            "$KREL"
-
-          test -s "$GITHUB_WORKSPACE/modules.tar.gz"
-
-          echo "Module archive:"
-          ls -lh "$GITHUB_WORKSPACE/modules.tar.gz"
-
-          echo
-          echo "Archive verification:"
-
-          tar -tzf "$GITHUB_WORKSPACE/modules.tar.gz" > "$GITHUB_WORKSPACE/modules-archive-list.txt"
-          sed -n '1,20p' "$GITHUB_WORKSPACE/modules-archive-list.txt"
-
-      # --------------------------------------------------
-      # 10. Prepare final artifacts
-      # --------------------------------------------------
-
-      - name: Prepare release artifacts
-        working-directory: linux-6.12.30
-        run: |
-          set -euo pipefail
-
-          # Kernel image.
-
-          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/bzImage"
-
-          # Final configuration.
-
-          cp .config "$GITHUB_WORKSPACE/config"
-
-          # Verify artifacts.
-
-          test -s "$GITHUB_WORKSPACE/bzImage"
-          test -s "$GITHUB_WORKSPACE/config"
-          test -s "$GITHUB_WORKSPACE/modules.tar.gz"
-          test -f "$GITHUB_WORKSPACE/depmod-debug.log"
-          test -f "$GITHUB_WORKSPACE/depmod-dry-run.txt"
-          test -s "$GITHUB_WORKSPACE/inventory-comparison.txt"
-
-          # Verify final configuration.
-
-          grep -q '^CONFIG_KERNEL_ZSTD=y$' "$GITHUB_WORKSPACE/config"
-
-          grep -q '^CONFIG_PREEMPT_RT=y$' "$GITHUB_WORKSPACE/config"
-
-          grep -q '^CONFIG_LOCALVERSION="-daphile-rebuild"$' "$GITHUB_WORKSPACE/config"
-
-          # Generate SHA256 checksums.
-
-          cd "$GITHUB_WORKSPACE"
-
-          sha256sum \
-            bzImage \
-            config \
-            modules.tar.gz \
-            depmod-debug.log \
-            depmod-dry-run.txt \
-            inventory-comparison.txt \
-            > SHA256SUMS.txt
-
-          echo "=================================="
-          echo "Release artifacts"
-          echo "=================================="
-
-          ls -lh \
-            bzImage \
-            config \
-            modules.tar.gz \
-            depmod-debug.log \
-            depmod-dry-run.txt \
-            inventory-comparison.txt \
-            SHA256SUMS.txt
-
-          echo
-          echo "Final kernel compression:"
-          grep '^CONFIG_KERNEL_ZSTD=y$' config
-
-          echo
-          echo "Final kernel version:"
-          grep '^CONFIG_LOCALVERSION=' config
-
-          echo
-          echo "SHA256:"
-          cat SHA256SUMS.txt
-
-      # --------------------------------------------------
-      # 11. Publish GitHub Release
-      # --------------------------------------------------
-
-      - name: Create Release and upload
-        uses: ncipollo/release-action@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-          tag: kernel-6.12.30-daphile-rebuild
-
-          name: Daphile 6.12.30 PREEMPT_RT Rebuild
-
-          commit: ${{ github.sha }}
-
-          allowUpdates: true
-          replacesArtifacts: true
-          artifactErrorsFailBuild: true
-          makeLatest: false
-
-          body: |
-            Daphile Linux 6.12.30 PREEMPT_RT reconstructed kernel.
-
-            Architecture: x86_64
-            Kernel: Linux 6.12.30
-            Kernel release: 6.12.30-daphile-rebuild
-
-            PREEMPT_RT: enabled
-            Kernel compression: ZSTD
-            Local version: -daphile-rebuild
-
-            Configuration reconstructed using:
-            - Official Daphile module inventory
-            - Official modules.builtin inventory
-            - Evidence-backed Kconfig fragment
-
-            Important:
-            This is a reconstructed configuration, not the original
-            byte-for-byte Daphile configuration.
-
-            Keep the original 6.12.30-daphile kernel as fallback.
-
-          artifacts: |
-            bzImage
-            config
-            modules.tar.gz
-            depmod-debug.log
-            depmod-dry-run.txt
-            inventory-comparison.txt
-            modules-missing-from-build.txt
-            modules-extra-in-build.txt
-            builtin-missing-from-build.txt
-            builtin-extra-in-build.txt
-            SHA256SUMS.txt
- .config
-          grep -q '^CONFIG_MODULE_SIG_SHA256=y
-      # --------------------------------------------------
-
-      - name: Compare official module and builtin inventory
-        run: |
-          set -euo pipefail
-
-          ROOT="$GITHUB_WORKSPACE/$DAPHILE_DIR"
-
-          KREL="$KERNEL_RELEASE"
-
-          MODDIR="$GITHUB_WORKSPACE/modules-staging/lib/modules/$KREL"
-
-          test -d "$MODDIR"
-
-          # Official module names.
-
-          tail -n +2 \
-            "$ROOT/daphile-6.12.30-official-modules.lsmod" \
-            | awk '{print $1}' \
-            | sort -u \
-            > "$GITHUB_WORKSPACE/official-modules.names"
-
-          # Built module names.
-
-          find "$MODDIR" -type f \
-            \( -name '*.ko' -o -name '*.ko.xz' \
-               -o -name '*.ko.zst' -o -name '*.ko.gz' \) \
-            -printf '%f\n' \
-            | sed -E 's/\.ko(\.(xz|zst|gz))?$//' \
-            | tr '-' '_' \
-            | sort -u \
-            > "$GITHUB_WORKSPACE/built-modules.names"
-
-          # Compare module names.
-
-          comm -23 \
-            "$GITHUB_WORKSPACE/official-modules.names" \
-            "$GITHUB_WORKSPACE/built-modules.names" \
-            > "$GITHUB_WORKSPACE/modules-missing-from-build.txt"
-
-          comm -13 \
-            "$GITHUB_WORKSPACE/official-modules.names" \
-            "$GITHUB_WORKSPACE/built-modules.names" \
-            > "$GITHUB_WORKSPACE/modules-extra-in-build.txt"
-
-          # Official built-in object paths.
-
-          sort -u "$ROOT/daphile-6.12.30-official-builtin.paths" \
-            > "$GITHUB_WORKSPACE/official-builtin.paths.sorted"
-
-          # Newly generated built-in object paths.
-
-          sort -u "$MODDIR/modules.builtin" \
-            > "$GITHUB_WORKSPACE/built-builtin.paths"
-
-          comm -23 \
-            "$GITHUB_WORKSPACE/official-builtin.paths.sorted" \
-            "$GITHUB_WORKSPACE/built-builtin.paths" \
-            > "$GITHUB_WORKSPACE/builtin-missing-from-build.txt"
-
-          comm -13 \
-            "$GITHUB_WORKSPACE/official-builtin.paths.sorted" \
-            "$GITHUB_WORKSPACE/built-builtin.paths" \
-            > "$GITHUB_WORKSPACE/builtin-extra-in-build.txt"
-
-          # Generate comparison report.
-
-          {
-            echo "Daphile 6.12.30 inventory comparison"
-            echo "===================================="
-            echo
-            echo "Kernel release: $KREL"
-            echo
-            echo "Official modules: $(wc -l < "$GITHUB_WORKSPACE/official-modules.names")"
-            echo "Built modules: $(wc -l < "$GITHUB_WORKSPACE/built-modules.names")"
-            echo "Missing modules: $(wc -l < "$GITHUB_WORKSPACE/modules-missing-from-build.txt")"
-            echo "Extra modules: $(wc -l < "$GITHUB_WORKSPACE/modules-extra-in-build.txt")"
-            echo
-            echo "Official builtins: $(wc -l < "$GITHUB_WORKSPACE/official-builtin.paths.sorted")"
-            echo "Built builtins: $(wc -l < "$GITHUB_WORKSPACE/built-builtin.paths")"
-            echo "Missing builtins: $(wc -l < "$GITHUB_WORKSPACE/builtin-missing-from-build.txt")"
-            echo "Extra builtins: $(wc -l < "$GITHUB_WORKSPACE/builtin-extra-in-build.txt")"
-          } | tee "$GITHUB_WORKSPACE/inventory-comparison.txt"
-
-          echo
-          echo "Missing module examples:"
-          head -n 30 "$GITHUB_WORKSPACE/modules-missing-from-build.txt"
-
-          echo
-          echo "Missing builtin examples:"
-          head -n 30 "$GITHUB_WORKSPACE/builtin-missing-from-build.txt"
-
-      # --------------------------------------------------
-      # 9. Package modules
-      # --------------------------------------------------
-
-      - name: Package modules.tar.gz
-        run: |
-          set -euo pipefail
-
-          KREL="$KERNEL_RELEASE"
-
-          STAGE="$GITHUB_WORKSPACE/modules-staging"
-
-          MODDIR="$STAGE/lib/modules/$KREL"
-
-          test -d "$MODDIR"
-          test -s "$MODDIR/modules.dep"
-          test -s "$MODDIR/modules.builtin"
-
-          cd "$STAGE/lib/modules"
-
-          tar \
-            --numeric-owner \
-            -czf "$GITHUB_WORKSPACE/modules.tar.gz" \
-            "$KREL"
-
-          test -s "$GITHUB_WORKSPACE/modules.tar.gz"
-
-          echo "Module archive:"
-          ls -lh "$GITHUB_WORKSPACE/modules.tar.gz"
-
-          echo
-          echo "Archive verification:"
-
-          tar -tzf "$GITHUB_WORKSPACE/modules.tar.gz" > "$GITHUB_WORKSPACE/modules-archive-list.txt"
-          sed -n '1,20p' "$GITHUB_WORKSPACE/modules-archive-list.txt"
-
-      # --------------------------------------------------
-      # 10. Prepare final artifacts
-      # --------------------------------------------------
-
-      - name: Prepare release artifacts
-        working-directory: linux-6.12.30
-        run: |
-          set -euo pipefail
-
-          # Kernel image.
-
-          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/bzImage"
-
-          # Final configuration.
-
-          cp .config "$GITHUB_WORKSPACE/config"
-
-          # Verify artifacts.
-
-          test -s "$GITHUB_WORKSPACE/bzImage"
-          test -s "$GITHUB_WORKSPACE/config"
-          test -s "$GITHUB_WORKSPACE/modules.tar.gz"
-          test -f "$GITHUB_WORKSPACE/depmod-debug.log"
-          test -f "$GITHUB_WORKSPACE/depmod-dry-run.txt"
-          test -s "$GITHUB_WORKSPACE/inventory-comparison.txt"
-
-          # Verify final configuration.
-
-          grep -q '^CONFIG_KERNEL_ZSTD=y$' "$GITHUB_WORKSPACE/config"
-
-          grep -q '^CONFIG_PREEMPT_RT=y$' "$GITHUB_WORKSPACE/config"
-
-          grep -q '^CONFIG_LOCALVERSION="-daphile-rebuild"$' "$GITHUB_WORKSPACE/config"
-
-          # Generate SHA256 checksums.
-
-          cd "$GITHUB_WORKSPACE"
-
-          sha256sum \
-            bzImage \
-            config \
-            modules.tar.gz \
-            depmod-debug.log \
-            depmod-dry-run.txt \
-            inventory-comparison.txt \
-            > SHA256SUMS.txt
-
-          echo "=================================="
-          echo "Release artifacts"
-          echo "=================================="
-
-          ls -lh \
-            bzImage \
-            config \
-            modules.tar.gz \
-            depmod-debug.log \
-            depmod-dry-run.txt \
-            inventory-comparison.txt \
-            SHA256SUMS.txt
-
-          echo
-          echo "Final kernel compression:"
-          grep '^CONFIG_KERNEL_ZSTD=y$' config
-
-          echo
-          echo "Final kernel version:"
-          grep '^CONFIG_LOCALVERSION=' config
-
-          echo
-          echo "SHA256:"
-          cat SHA256SUMS.txt
-
-      # --------------------------------------------------
-      # 11. Publish GitHub Release
-      # --------------------------------------------------
-
-      - name: Create Release and upload
-        uses: ncipollo/release-action@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-          tag: kernel-6.12.30-daphile-rebuild
-
-          name: Daphile 6.12.30 PREEMPT_RT Rebuild
-
-          commit: ${{ github.sha }}
-
-          allowUpdates: true
-          replacesArtifacts: true
-          artifactErrorsFailBuild: true
-          makeLatest: false
-
-          body: |
-            Daphile Linux 6.12.30 PREEMPT_RT reconstructed kernel.
-
-            Architecture: x86_64
-            Kernel: Linux 6.12.30
-            Kernel release: 6.12.30-daphile-rebuild
-
-            PREEMPT_RT: enabled
-            Kernel compression: ZSTD
-            Local version: -daphile-rebuild
-
-            Configuration reconstructed using:
-            - Official Daphile module inventory
-            - Official modules.builtin inventory
-            - Evidence-backed Kconfig fragment
-
-            Important:
-            This is a reconstructed configuration, not the original
-            byte-for-byte Daphile configuration.
-
-            Keep the original 6.12.30-daphile kernel as fallback.
-
-          artifacts: |
-            bzImage
-            config
-            modules.tar.gz
-            depmod-debug.log
-            depmod-dry-run.txt
-            inventory-comparison.txt
-            modules-missing-from-build.txt
-            modules-extra-in-build.txt
-            builtin-missing-from-build.txt
-            builtin-extra-in-build.txt
-            SHA256SUMS.txt
- .config
-
-          echo
-          echo "===== SIGNING CERTIFICATE ====="
-          test -s "$CERT"
-          openssl x509 -inform DER -in "$CERT" -noout -subject -issuer -fingerprint -sha256
-          cp "$CERT" "$GITHUB_WORKSPACE/signing_key.x509"
-          test -s "$GITHUB_WORKSPACE/signing_key.x509"
-
-          echo
-          echo "===== HDA MODULE SIGNATURE ====="
-          HDA_MODULE="$(find "$MODDIR" -type f -name 'snd-hda-intel.ko' -print -quit)"
-          if [[ -z "$HDA_MODULE" ]]; then
-            echo "::error::snd-hda-intel.ko not found in installed modules"
-            exit 1
-          fi
-
-          SIGNER="$(modinfo -F signer "$HDA_MODULE" | head -n 1)"
-          SIG_KEY="$(modinfo -F sig_key "$HDA_MODULE" | head -n 1)"
-          SIG_HASH="$(modinfo -F sig_hashalgo "$HDA_MODULE" | head -n 1)"
-
-          if [[ -z "$SIGNER" || -z "$SIG_KEY" || -z "$SIG_HASH" ]]; then
-            echo "::error::HDA module is missing signature metadata"
-            modinfo "$HDA_MODULE" || true
-            exit 1
-          fi
-
-          {
-            echo "Kernel release: $KREL"
-            echo "HDA module: $HDA_MODULE"
-            echo "Signer: $SIGNER"
-            echo "Signature key ID: $SIG_KEY"
-            echo "Signature hash algorithm: $SIG_HASH"
-            echo
-            echo "Certificate:"
-            openssl x509 -inform DER -in "$CERT" -noout -subject -issuer -fingerprint -sha256
-          } | tee "$REPORT"
-
-          echo
-          echo "HDA module signature metadata verified."
-
-      # --------------------------------------------------
-      # 9. Compare official inventory
-      # --------------------------------------------------
-
-      - name: Compare official module and builtin inventory
-        run: |
-          set -euo pipefail
-
-          ROOT="$GITHUB_WORKSPACE/$DAPHILE_DIR"
-
-          KREL="$KERNEL_RELEASE"
-
-          MODDIR="$GITHUB_WORKSPACE/modules-staging/lib/modules/$KREL"
-
-          test -d "$MODDIR"
-
-          # Official module names.
-
-          tail -n +2 \
-            "$ROOT/daphile-6.12.30-official-modules.lsmod" \
-            | awk '{print $1}' \
-            | sort -u \
-            > "$GITHUB_WORKSPACE/official-modules.names"
-
-          # Built module names.
-
-          find "$MODDIR" -type f \
-            \( -name '*.ko' -o -name '*.ko.xz' \
-               -o -name '*.ko.zst' -o -name '*.ko.gz' \) \
-            -printf '%f\n' \
-            | sed -E 's/\.ko(\.(xz|zst|gz))?$//' \
-            | tr '-' '_' \
-            | sort -u \
-            > "$GITHUB_WORKSPACE/built-modules.names"
-
-          # Compare module names.
-
-          comm -23 \
-            "$GITHUB_WORKSPACE/official-modules.names" \
-            "$GITHUB_WORKSPACE/built-modules.names" \
-            > "$GITHUB_WORKSPACE/modules-missing-from-build.txt"
-
-          comm -13 \
-            "$GITHUB_WORKSPACE/official-modules.names" \
-            "$GITHUB_WORKSPACE/built-modules.names" \
-            > "$GITHUB_WORKSPACE/modules-extra-in-build.txt"
-
-          # Official built-in object paths.
-
-          sort -u "$ROOT/daphile-6.12.30-official-builtin.paths" \
-            > "$GITHUB_WORKSPACE/official-builtin.paths.sorted"
-
-          # Newly generated built-in object paths.
-
-          sort -u "$MODDIR/modules.builtin" \
-            > "$GITHUB_WORKSPACE/built-builtin.paths"
-
-          comm -23 \
-            "$GITHUB_WORKSPACE/official-builtin.paths.sorted" \
-            "$GITHUB_WORKSPACE/built-builtin.paths" \
-            > "$GITHUB_WORKSPACE/builtin-missing-from-build.txt"
-
-          comm -13 \
-            "$GITHUB_WORKSPACE/official-builtin.paths.sorted" \
-            "$GITHUB_WORKSPACE/built-builtin.paths" \
-            > "$GITHUB_WORKSPACE/builtin-extra-in-build.txt"
-
-          # Generate comparison report.
-
-          {
-            echo "Daphile 6.12.30 inventory comparison"
-            echo "===================================="
-            echo
-            echo "Kernel release: $KREL"
-            echo
-            echo "Official modules: $(wc -l < "$GITHUB_WORKSPACE/official-modules.names")"
-            echo "Built modules: $(wc -l < "$GITHUB_WORKSPACE/built-modules.names")"
-            echo "Missing modules: $(wc -l < "$GITHUB_WORKSPACE/modules-missing-from-build.txt")"
-            echo "Extra modules: $(wc -l < "$GITHUB_WORKSPACE/modules-extra-in-build.txt")"
-            echo
-            echo "Official builtins: $(wc -l < "$GITHUB_WORKSPACE/official-builtin.paths.sorted")"
-            echo "Built builtins: $(wc -l < "$GITHUB_WORKSPACE/built-builtin.paths")"
-            echo "Missing builtins: $(wc -l < "$GITHUB_WORKSPACE/builtin-missing-from-build.txt")"
-            echo "Extra builtins: $(wc -l < "$GITHUB_WORKSPACE/builtin-extra-in-build.txt")"
-          } | tee "$GITHUB_WORKSPACE/inventory-comparison.txt"
-
-          echo
-          echo "Missing module examples:"
-          head -n 30 "$GITHUB_WORKSPACE/modules-missing-from-build.txt"
-
-          echo
-          echo "Missing builtin examples:"
-          head -n 30 "$GITHUB_WORKSPACE/builtin-missing-from-build.txt"
-
-      # --------------------------------------------------
-      # 9. Package modules
-      # --------------------------------------------------
-
-      - name: Package modules.tar.gz
-        run: |
-          set -euo pipefail
-
-          KREL="$KERNEL_RELEASE"
-
-          STAGE="$GITHUB_WORKSPACE/modules-staging"
-
-          MODDIR="$STAGE/lib/modules/$KREL"
-
-          test -d "$MODDIR"
-          test -s "$MODDIR/modules.dep"
-          test -s "$MODDIR/modules.builtin"
-
-          cd "$STAGE/lib/modules"
-
-          tar \
-            --numeric-owner \
-            -czf "$GITHUB_WORKSPACE/modules.tar.gz" \
-            "$KREL"
-
-          test -s "$GITHUB_WORKSPACE/modules.tar.gz"
-
-          echo "Module archive:"
-          ls -lh "$GITHUB_WORKSPACE/modules.tar.gz"
-
-          echo
-          echo "Archive verification:"
-
-          tar -tzf "$GITHUB_WORKSPACE/modules.tar.gz" > "$GITHUB_WORKSPACE/modules-archive-list.txt"
-          sed -n '1,20p' "$GITHUB_WORKSPACE/modules-archive-list.txt"
-
-      # --------------------------------------------------
-      # 10. Prepare final artifacts
-      # --------------------------------------------------
-
-      - name: Prepare release artifacts
-        working-directory: linux-6.12.30
-        run: |
-          set -euo pipefail
-
-          # Kernel image.
-
-          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/bzImage"
-
-          # Final configuration.
-
-          cp .config "$GITHUB_WORKSPACE/config"
-
-          # Verify artifacts.
-
-          test -s "$GITHUB_WORKSPACE/bzImage"
-          test -s "$GITHUB_WORKSPACE/config"
-          test -s "$GITHUB_WORKSPACE/modules.tar.gz"
-          test -f "$GITHUB_WORKSPACE/depmod-debug.log"
-          test -f "$GITHUB_WORKSPACE/depmod-dry-run.txt"
-          test -s "$GITHUB_WORKSPACE/inventory-comparison.txt"
-
-          # Verify final configuration.
-
-          grep -q '^CONFIG_KERNEL_ZSTD=y$' "$GITHUB_WORKSPACE/config"
-
-          grep -q '^CONFIG_PREEMPT_RT=y$' "$GITHUB_WORKSPACE/config"
-
-          grep -q '^CONFIG_LOCALVERSION="-daphile-rebuild"$' "$GITHUB_WORKSPACE/config"
-
-          # Generate SHA256 checksums.
-
-          cd "$GITHUB_WORKSPACE"
-
-          sha256sum \
-            bzImage \
-            config \
-            modules.tar.gz \
-            depmod-debug.log \
-            depmod-dry-run.txt \
-            inventory-comparison.txt \
-            > SHA256SUMS.txt
-
-          echo "=================================="
-          echo "Release artifacts"
-          echo "=================================="
-
-          ls -lh \
-            bzImage \
-            config \
-            modules.tar.gz \
-            depmod-debug.log \
-            depmod-dry-run.txt \
-            inventory-comparison.txt \
-            SHA256SUMS.txt
-
-          echo
-          echo "Final kernel compression:"
-          grep '^CONFIG_KERNEL_ZSTD=y$' config
-
-          echo
-          echo "Final kernel version:"
-          grep '^CONFIG_LOCALVERSION=' config
-
-          echo
-          echo "SHA256:"
-          cat SHA256SUMS.txt
-
-      # --------------------------------------------------
-      # 11. Publish GitHub Release
-      # --------------------------------------------------
-
-      - name: Create Release and upload
-        uses: ncipollo/release-action@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-          tag: kernel-6.12.30-daphile-rebuild
-
-          name: Daphile 6.12.30 PREEMPT_RT Rebuild
-
-          commit: ${{ github.sha }}
-
-          allowUpdates: true
-          replacesArtifacts: true
-          artifactErrorsFailBuild: true
-          makeLatest: false
-
-          body: |
-            Daphile Linux 6.12.30 PREEMPT_RT reconstructed kernel.
-
-            Architecture: x86_64
-            Kernel: Linux 6.12.30
-            Kernel release: 6.12.30-daphile-rebuild
-
-            PREEMPT_RT: enabled
-            Kernel compression: ZSTD
-            Local version: -daphile-rebuild
-
-            Configuration reconstructed using:
-            - Official Daphile module inventory
-            - Official modules.builtin inventory
-            - Evidence-backed Kconfig fragment
-
-            Important:
-            This is a reconstructed configuration, not the original
-            byte-for-byte Daphile configuration.
-
-            Keep the original 6.12.30-daphile kernel as fallback.
-
-          artifacts: |
-            bzImage
-            config
-            modules.tar.gz
-            depmod-debug.log
-            depmod-dry-run.txt
-            inventory-comparison.txt
+            signing-cert-info.txt
+            hda-module-signatures.txt
             modules-missing-from-build.txt
             modules-extra-in-build.txt
             builtin-missing-from-build.txt
