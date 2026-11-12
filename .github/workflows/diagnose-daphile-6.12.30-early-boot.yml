@@ -112,7 +112,7 @@ jobs:
 
           # Prove that the diagnostic config differs from the reviewed baseline
           # in exactly two intended symbols: CMDLINE and LOCALVERSION.
-          python3 - <<'PY'
+          python3 - "$GITHUB_WORKSPACE/config-baseline-reviewed" .config <<'PY'
           import sys
           def read_config(path):
               values = {}
@@ -126,8 +126,8 @@ jobs:
                           values[line[2:-11]] = "n"
               return values
 
-          before = read_config("config-baseline-reviewed")
-          after = read_config(".config")
+          before = read_config(sys.argv[1])
+          after = read_config(sys.argv[2])
           changed = sorted(k for k in set(before) | set(after) if before.get(k, "n") != after.get(k, "n"))
           expected = ["CONFIG_CMDLINE", "CONFIG_LOCALVERSION"]
           print("Changed Kconfig symbols:", changed)
