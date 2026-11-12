@@ -1,95 +1,262 @@
 #!/usr/bin/env bash
-# Run from the root of a clean Linux v6.12.30 source tree.
-# Place the two .lsmod inventory files beside this script or adjust paths.
-set -euo pipefail
+# Evidence-constrained candidate reconstruction for upstream Linux v6.12.30.
+# This does NOT recover the missing official .config and does NOT compile a kernel.
+set -Eeuo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODS="$ROOT/daphile-6.12.30-official-modules.lsmod"
 BUILTINS="$ROOT/daphile-6.12.30-official-builtin.lsmod"
+BUILTIN_PATHS="$ROOT/daphile-6.12.30-official-builtin.paths"
+FRAGMENT="$ROOT/daphile-6.12.30-confirmed-v2.fragment"
+OUT="${AUDIT_OUT:-$PWD/daphile-config-audit}"
 
-[[ -f "$MODS" && -f "$BUILTINS" ]] || {
-  echo "Missing official module inventory files in $ROOT" >&2
-  exit 1
+for f in "$MODS" "$BUILTINS" "$BUILTIN_PATHS" "$FRAGMENT"; do
+  [[ -s "$f" ]] || { echo "Missing/empty evidence file: $f" >&2; exit 1; }
+done
+[[ -x scripts/kconfig/streamline_config.pl && -x scripts/config ]] || {
+  echo "Run from the root of a clean Linux v6.12.30 source tree" >&2; exit 1;
 }
-[[ -x scripts/kconfig/streamline_config.pl ]] || {
-  echo "Run this script from the root of a Linux v6.12.30 source tree" >&2
-  exit 1
+[[ "$(make -s kernelversion)" == "6.12.30" ]] || {
+  echo "Expected Linux 6.12.30" >&2; exit 1;
 }
 
-# Pass A: determine which tristate objects were built-in in the official kernel.
+mkdir -p "$OUT"
+OUT="$(cd "$OUT" && pwd)"
+MOD_COUNT=$(awk 'NR>1 && NF {n++} END {print n+0}' "$MODS")
+BUILTIN_COUNT=$(awk 'NR>1 && NF {n++} END {print n+0}' "$BUILTINS")
+BUILTIN_PATH_COUNT=$(awk 'NF {n++} END {print n+0}' "$BUILTIN_PATHS")
+
+# The lsmod-style inventories are parsed by streamline_config.pl using only
+# the first field; Size/Used-by values are placeholders, not runtime evidence.
+inventory_names() {
+  awk 'NR>1 && NF {print $1}' "$1" | LC_ALL=C sort -u
+}
+inventory_names "$BUILTINS" > "$OUT/builtin-inventory.names"
+inventory_names "$MODS" > "$OUT/module-inventory.names"
+if [[ "$BUILTIN_COUNT" -ne "$BUILTIN_PATH_COUNT" ]]; then
+  echo "Built-in inventory count ($BUILTIN_COUNT) != .paths count ($BUILTIN_PATH_COUNT)" >&2
+  exit 1
+fi
+if [[ "$(wc -l < "$OUT/builtin-inventory.names")" -ne "$BUILTIN_COUNT" ]]; then
+  echo "Duplicate built-in module names detected" >&2
+  exit 1
+fi
+if [[ "$(wc -l < "$OUT/module-inventory.names")" -ne "$MOD_COUNT" ]]; then
+  echo "Duplicate loadable module names detected" >&2
+  exit 1
+fi
+
+run_local() {
+  local list="$1" target="$2" rc
+  set +e
+  yes "" | env LSMOD="$list" make "$target" \
+    > "$OUT/$target.stdout.log" 2> "$OUT/$target.stderr.log"
+  rc=${PIPESTATUS[1]}
+  set -e
+  if [[ $rc -ne 0 ]]; then
+    echo "make $target failed: $rc (see $OUT/$target.stderr.log)" >&2
+    exit "$rc"
+  fi
+  # Keep streamline_config.pl unresolved-object warnings visible and countable.
+  grep -E 'config not found|did not have configs|WARNING:' \
+    "$OUT/$target.stderr.log" > "$OUT/$target.warnings.log" || true
+}
+
+echo "Official inventory input counts: modules=$MOD_COUNT builtins=$BUILTIN_COUNT"
 make allmodconfig
-cp .config .config.allmodconfig
-LSMOD="$BUILTINS" make localyesconfig
-cp .config .config.builtin-probe
+cp .config "$OUT/config.allmodconfig"
 
-# Keep only symbols that changed from =m in allmodconfig to =y when the
-# official built-in object list was supplied. This avoids copying unrelated
-# allmodconfig defaults into the built-in override fragment.
+# Infer only symbols changed from m to y by localyesconfig using the official
+# built-in-object inventory. This is a heuristic, not an official config dump.
+run_local "$BUILTINS" localyesconfig
+cp .config "$OUT/config.builtin-probe"
 awk '
   FNR==NR {
-    if ($0 ~ /^CONFIG_[A-Za-z0-9_]+=m$/) {
-      split($0, a, "="); was_m[a[1]]=1
-    }
+    if ($0 ~ /^CONFIG_[A-Za-z0-9_]+=m$/) { split($0,a,"="); was_m[a[1]]=1 }
     next
   }
   /^CONFIG_[A-Za-z0-9_]+=y$/ {
-    split($0, a, "=")
-    if (a[1] in was_m) print
+    split($0,a,"="); if (a[1] in was_m) print
   }
-' .config.allmodconfig .config.builtin-probe | sort -u > .daphile-builtin-y.fragment
+' "$OUT/config.allmodconfig" "$OUT/config.builtin-probe" |
+  LC_ALL=C sort -u > "$OUT/inferred-builtin-y.fragment"
 
-# Pass B: keep the official .ko inventory modular, using the official list
-# as the LSMOD input to the kernel's own localmodconfig dependency resolver.
+# Independently retain options required by the official loadable-module list.
 make allmodconfig
-LSMOD="$MODS" make localmodconfig
+run_local "$MODS" localmodconfig
+cp .config "$OUT/config.localmodconfig"
 
-# Overlay only the =y transitions proven by modules.builtin.
-./scripts/kconfig/merge_config.sh -m -O . .config .daphile-builtin-y.fragment
+# Merge the inferred built-ins and the small evidence-backed project fragment.
+scripts/kconfig/merge_config.sh -m -O . .config \
+  "$OUT/inferred-builtin-y.fragment" "$FRAGMENT"
 
-# Kernel image compression: ZSTD
-./scripts/config --enable KERNEL_ZSTD
-./scripts/config --disable KERNEL_GZIP
-./scripts/config --disable KERNEL_BZIP2
-./scripts/config --disable KERNEL_LZMA
-./scripts/config --disable KERNEL_XZ
-./scripts/config --disable KERNEL_LZO
-./scripts/config --disable KERNEL_LZ4
-./scripts/config --disable KERNEL_UNCOMPRESSED
+# Project requirements explicitly agreed for this rebuild.
+scripts/config --enable PREEMPT_RT
+scripts/config --enable HIGH_RES_TIMERS
+scripts/config --enable HZ_250
+scripts/config --enable KERNEL_ZSTD
+for sym in KERNEL_GZIP KERNEL_BZIP2 KERNEL_LZMA KERNEL_XZ KERNEL_LZO KERNEL_LZ4 KERNEL_UNCOMPRESSED; do
+  scripts/config --disable "$sym"
+done
+scripts/config --set-str LOCALVERSION "-daphile-rebuild"
+scripts/config --disable LOCALVERSION_AUTO
 
-# Confirmed distribution-wide ABI/runtime facts. Do not set HZ/NO_HZ/ASPM/
-# IOMMU/DMA/HDA power-save here: those values are not recovered yet.
-./scripts/config --enable EXPERT
-./scripts/config --enable SMP
-./scripts/config --enable MODULES
-./scripts/config --enable MODULE_UNLOAD
-./scripts/config --enable PCI
-./scripts/config --enable INPUT
-./scripts/config --enable HIGH_RES_TIMERS
-./scripts/config --enable PREEMPT_RT
-./scripts/config --set-str LOCALVERSION "-daphile-rebuild"
-./scripts/config --disable LOCALVERSION_AUTO
+# Restore inventory-backed driver settings that local{yes,mod}config cannot
+# infer reliably from module names alone.
+# The official built-in inventory contains vesafb, whose Kconfig symbol is bool.
+scripts/config --enable FB_VESA
 
-# Preserve the known J1800 HDA stack as modules, and ALSA core as built-in.
-# Kconfig dependency resolution will normalize the selected symbols.
-./scripts/config --enable SOUND
-./scripts/config --enable SND
-./scripts/config --enable SND_PCM
-./scripts/config --enable SND_TIMER
-./scripts/config --enable SND_HRTIMER
-./scripts/config --enable SND_ALOOP
-./scripts/config --enable SND_PCI
-./scripts/config --module SND_HDA
-./scripts/config --module SND_HDA_CORE
-./scripts/config --module SND_HDA_INTEL
-./scripts/config --module SND_HDA_GENERIC
-./scripts/config --module SND_HDA_CODEC_REALTEK
-./scripts/config --module SND_HDA_CODEC_HDMI
-./scripts/config --module SND_INTEL_DSP_CONFIG
+# Restore dependencies required by official built-in NFS/cachefiles objects.
+# cachefiles requires FSCACHE; nfs_acl is selected by NFS_V3_ACL.
+scripts/config --enable FSCACHE
+scripts/config --enable NFS_V3_ACL
 
-KCONFIG_WARN_UNKNOWN_SYMBOLS=1 make olddefconfig
+# The official built-in nfsv4 object was probed with NFSv4.1/pNFS enabled.
+scripts/config --enable NFS_V4_1
 
-cp .config .config.daphile-6.12.30-reconstructed
+# The official loadable-module inventory contains intel_atomisp2_pm but no
+# atomisp module. INTEL_ATOMISP is a menu bool left enabled by allmodconfig;
+# it conflicts with INTEL_ATOMISP2_PM (depends on !INTEL_ATOMISP).
+scripts/config --disable INTEL_ATOMISP
+scripts/config --module INTEL_ATOMISP2_PM
 
-echo "Created .config.daphile-6.12.30-reconstructed"
-echo "Review key values:"
-grep -E '^(CONFIG_(X86_64|SMP|EXPERT|PREEMPT_RT|MODULES|MODULE_UNLOAD|HZ|HZ_[0-9]+|NO_HZ|HIGH_RES_TIMERS|SOUND|SND|SND_PCM|SND_TIMER|SND_HRTIMER|SND_ALOOP|SND_HDA|SND_HDA_CORE|SND_HDA_INTEL|SND_HDA_GENERIC|SND_HDA_CODEC_REALTEK|SND_HDA_CODEC_HDMI|SND_INTEL_DSP_CONFIG|LOCALVERSION))=' .config || true
+# Preserve permissive loading of unsigned package modules.
+scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
+scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
+scripts/config --disable MODULE_SIG_ALL
+scripts/config --disable MODULE_SIG_FORCE
+scripts/config --disable IMA_APPRAISE_MODSIG
+
+# Restore only values with a known original-config comparison.
+scripts/config --disable MAXSMP
+scripts/config --set-val NR_CPUS 8
+scripts/config --disable ACPI_REDUCED_HARDWARE_ONLY
+scripts/config --disable X86_VSMP
+scripts/config --set-val X86_INTERNODE_CACHE_SHIFT 6
+# BOOTTIME_TRACING selects BOOT_CONFIG in kernel/trace/Kconfig. It is not
+# present in the official built-in inventory and is not needed for this build.
+scripts/config --disable BOOTTIME_TRACING
+scripts/config --disable BOOT_CONFIG
+scripts/config --disable BOOT_CONFIG_EMBED
+scripts/config --disable BOOT_CONFIG_FORCE
+scripts/config --disable X86_INTEL_TSX_MODE_OFF
+scripts/config --enable X86_INTEL_TSX_MODE_AUTO
+
+# Record the state after scripts/config and before Kconfig normalization.
+cp .config "$OUT/config.pre-olddefconfig"
+{
+  echo "[BOOT_CONFIG / BOOTTIME_TRACING before olddefconfig]"
+  grep -E '^(CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING)=|# CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING) is not set$)' .config || true
+} > "$OUT/boot-config-state.log"
+if grep -qE '^CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING)=y$' .config; then
+  echo "ERROR: BOOT_CONFIG or BOOTTIME_TRACING remained enabled after scripts/config" >&2
+  exit 1
+fi
+
+KCONFIG_WARN_UNKNOWN_SYMBOLS=1 make olddefconfig \
+  2> "$OUT/olddefconfig.stderr.log"
+make syncconfig
+
+# Record whether Kconfig normalization re-enabled any forbidden option.
+cp .config "$OUT/config.post-olddefconfig"
+{
+  echo "[BOOT_CONFIG / BOOTTIME_TRACING after olddefconfig + syncconfig]"
+  grep -E '^(CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING)=|# CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING) is not set$)' .config || true
+} >> "$OUT/boot-config-state.log"
+if grep -qE '^CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING)=y$' .config; then
+  echo "ERROR: BOOT_CONFIG or its BOOTTIME_TRACING selector was re-enabled by Kconfig normalization" >&2
+  echo "See $OUT/boot-config-state.log and config.post-olddefconfig" >&2
+  exit 1
+fi
+
+cp .config "$OUT/config.candidate"
+sha256sum "$OUT/config.candidate" | tee "$OUT/config.sha256"
+
+{
+  echo "Linux source: $(make -s kernelversion)"
+  echo "Kernel release: $(make -s kernelrelease)"
+  echo "Official loadable .ko inventory entries: $MOD_COUNT"
+  echo "Official built-in inventory entries: $BUILTIN_COUNT"
+  echo "Official built-in .paths entries: $BUILTIN_PATH_COUNT"
+  echo "Unique inferred builtin y symbols: $(wc -l < "$OUT/inferred-builtin-y.fragment")"
+  echo "localyesconfig warnings: $(wc -l < "$OUT/localyesconfig.warnings.log")"
+  echo "localmodconfig warnings: $(wc -l < "$OUT/localmodconfig.warnings.log")"
+  echo "Candidate config SHA256: $(sha256sum "$OUT/config.candidate" | awk '{print $1}')"
+  echo
+  echo "[Required project settings]"
+  grep -E '^(CONFIG_(PREEMPT_RT|HIGH_RES_TIMERS|HZ_250|HZ|KERNEL_ZSTD|LOCALVERSION|LOCALVERSION_AUTO|MODULE_SIG_ALL|MODULE_SIG_FORCE|SYSTEM_TRUSTED_KEYS|SYSTEM_REVOCATION_KEYS))=' .config || true
+  echo
+  echo "[Known original values restored]"
+  grep -E '^(CONFIG_NR_CPUS=[0-9]+|CONFIG_X86_INTERNODE_CACHE_SHIFT=[0-9]+|CONFIG_X86_INTEL_TSX_MODE_AUTO=y)$' .config || true
+  echo
+  echo "[Inventory-backed driver corrections]"
+  grep -E '^(CONFIG_(FB_VESA|VIDEO|BRCMFMAC|BRCMFMAC_SDIO|BRCMFMAC_USB|BRCMFMAC_PCIE|INTEL_ATOMISP2_PM))=' .config || true
+  grep -E '^(CONFIG_(FSCACHE|CACHEFILES|NFS_V3_ACL|NFS_ACL_SUPPORT|NFS_V4_1|PNFS_BLOCK|PNFS_FILE_LAYOUT|PNFS_FLEXFILE_LAYOUT))=' .config || true
+  grep -E '^# CONFIG_INTEL_ATOMISP is not set$' .config || true
+  echo
+  echo "[Known module-name mapping warnings]"
+  echo "vesafb -> CONFIG_FB_VESA (bool; explicitly enabled from official built-in inventory)"
+  echo "brcmfmac_bca/brcmfmac_cyw/brcmfmac_wcc -> CONFIG_BRCMFMAC and its bus options"
+  echo "intel_atomisp2_pm -> CONFIG_INTEL_ATOMISP2_PM (explicit module setting; INTEL_ATOMISP disabled)"
+  echo "video_common -> CONFIG_VIDEO=y is present; exact module-name mapping remains unverified"
+  echo
+  echo "[Known original options expected unset]"
+  grep -E '^# CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF) is not set$' .config || true
+  echo
+  echo "[Unsupported optional tracing selector disabled]"
+  grep -E '^# CONFIG_BOOTTIME_TRACING is not set$' .config || true
+  echo
+  echo "[Review only; not changed without sufficient evidence]"
+  grep -E '^(CONFIG_(X86_INTEL_MID|HYPERV|IRQ_TIME_ACCOUNTING))=' .config || true
+  echo
+  echo "[Unresolved localyesconfig/localmodconfig warnings]"
+  cat "$OUT/localyesconfig.warnings.log" "$OUT/localmodconfig.warnings.log"
+} | tee "$OUT/audit-report.txt"
+
+# Fail on required project settings or known-value restoration regressions.
+grep -qx 'CONFIG_PREEMPT_RT=y' .config
+grep -qx 'CONFIG_HIGH_RES_TIMERS=y' .config
+grep -qx 'CONFIG_HZ_250=y' .config
+grep -qx 'CONFIG_HZ=250' .config
+grep -qx 'CONFIG_KERNEL_ZSTD=y' .config
+grep -qx 'CONFIG_LOCALVERSION="-daphile-rebuild"' .config
+grep -qx 'CONFIG_NR_CPUS=8' .config
+grep -qx 'CONFIG_X86_INTERNODE_CACHE_SHIFT=6' .config
+if grep -qx 'CONFIG_X86_VSMP=y' .config; then
+  echo "ERROR: CONFIG_X86_VSMP must be disabled" >&2
+  exit 1
+fi
+grep -qx 'CONFIG_X86_INTEL_TSX_MODE_AUTO=y' .config
+grep -qx 'CONFIG_FB_VESA=y' .config
+grep -qx 'CONFIG_FSCACHE=y' .config
+grep -qx 'CONFIG_CACHEFILES=y' .config
+grep -qx 'CONFIG_NFS_V3_ACL=y' .config
+grep -qx 'CONFIG_NFS_ACL_SUPPORT=y' .config
+grep -qx 'CONFIG_NFS_V4_1=y' .config
+grep -qx 'CONFIG_PNFS_BLOCK=y' .config
+grep -qx 'CONFIG_PNFS_FILE_LAYOUT=y' .config
+grep -qx 'CONFIG_PNFS_FLEXFILE_LAYOUT=y' .config
+grep -qx 'CONFIG_INTEL_ATOMISP2_PM=m' .config
+if grep -qx 'CONFIG_INTEL_ATOMISP=y' .config; then
+  echo "ERROR: CONFIG_INTEL_ATOMISP conflicts with inventory-backed intel_atomisp2_pm module" >&2
+  exit 1
+fi
+
+if grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config; then
+  echo "ERROR: a known-original-unset option or unsupported BOOT_CONFIG selector is enabled:" >&2
+  grep -E '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config; then
+  echo "ERROR: an unapproved kernel compression option is enabled:" >&2
+  grep -E '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config; then
+  echo "ERROR: a disallowed module-signature option is enabled:" >&2
+  grep -E '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config >&2
+  exit 1
+fi
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
