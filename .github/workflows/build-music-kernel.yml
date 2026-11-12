@@ -155,9 +155,6 @@ jobs:
           
           ./scripts/config --enable PREEMPT_RT
           ./scripts/config --enable HIGH_RES_TIMERS
-
-          # Use HZ=250 for the 6.12.30 rebuild.
-          ./scripts/config --enable HZ_250
           
           # ALSA core: built-in.
           
