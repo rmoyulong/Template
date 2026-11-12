@@ -36,6 +36,17 @@ jobs:
           sudo apt-get clean
           df -h
 
+      - name: Switch Ubuntu runner mirror
+        run: |
+          set -euo pipefail
+          echo "===== ORIGINAL APT SOURCES ====="
+          cat /etc/apt/sources.list.d/ubuntu.sources
+          sudo sed -i -E \
+            's|mirror\+file:/etc/apt/apt-mirrors\.txt|https://mirrors.aliyun.com/ubuntu/|g; s|https?://azure\.archive\.ubuntu\.com/ubuntu/?|https://mirrors.aliyun.com/ubuntu/|g' \
+            /etc/apt/sources.list.d/ubuntu.sources
+          echo "===== UPDATED APT SOURCES ====="
+          cat /etc/apt/sources.list.d/ubuntu.sources
+
       - name: Install kernel build dependencies
         run: |
           set -euo pipefail
