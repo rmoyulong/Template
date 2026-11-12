@@ -206,7 +206,164 @@ jobs:
             echo
             echo "Diagnostic settings:"
             grep -E '^(CONFIG_(CMDLINE_BOOL|EARLY_PRINTK|EFI|EFI_STUB|EFI_EARLYCON|SERIAL_EARLYCON|X86_VERBOSE_BOOTUP|PRINTK_TIME|PREEMPT_RT|HZ_250|HZ|KERNEL_ZSTD|LOCALVERSION|FTRACE_SELFTEST|FUNCTION_TRACER|FUNCTION_GRAPH_TRACER|DYNAMIC_FTRACE))=' .config
-            grep -E '^(CONFIG_FTRACE_STARTUP_TEST=y|# CONFIG_FTRACE_STARTUP_TEST is not set)
+            grep -E '^(CONFIG_FTRACE_STARTUP_TEST=y|# CONFIG_FTRACE_STARTUP_TEST is not set)            echo
+            echo "CMDLINE_OVERRIDE:"
+            grep -E '^(CONFIG_CMDLINE_OVERRIDE=y|# CONFIG_CMDLINE_OVERRIDE is not set)$' .config || true
+            echo
+            echo "The reviewed baseline config is preserved separately."
+            echo "The normal build workflow and its Release assets are not modified."
+          } | tee "$GITHUB_WORKSPACE/early-boot-diagnostic-report.txt"
+
+      - name: Build diagnostic bzImage and modules
+        working-directory: linux-6.12.30
+        run: |
+          set -Eeuo pipefail
+          export ARCH=x86
+          export CC="ccache gcc"
+          ccache -M 3G
+
+          KREL="$(make -s kernelrelease)"
+          test "$KREL" = "$DIAG_KERNEL_RELEASE"
+
+          make -j"$BUILD_JOBS" bzImage modules
+          test -s arch/x86/boot/bzImage
+          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/bzImage-ftracenotest"
+
+          echo "Built kernel release: $KREL"
+          ls -lh "$GITHUB_WORKSPACE/bzImage-ftracenotest"
+
+      - name: Install modules and generate module dependency metadata
+        working-directory: linux-6.12.30
+        run: |
+          set -Eeuo pipefail
+
+          KREL="$(make -s kernelrelease)"
+          test "$KREL" = "$DIAG_KERNEL_RELEASE"
+
+          STAGE="$GITHUB_WORKSPACE/modules-staging"
+          MODDIR="$STAGE/lib/modules/$KREL"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+
+          make INSTALL_MOD_PATH="$STAGE" modules_install
+          test -d "$MODDIR"
+          rm -f "$MODDIR/build" "$MODDIR/source"
+
+          while IFS= read -r -d '' MODULE; do
+            gzip -t "$MODULE"
+            gzip -d "$MODULE"
+          done < <(find "$MODDIR" -type f -name '*.ko.gz' -print0)
+
+          depmod -a -b "$STAGE" "$KREL"
+          test -s "$MODDIR/modules.dep"
+          test -s "$MODDIR/modules.builtin"
+
+          tar --numeric-owner -czf "$GITHUB_WORKSPACE/modules-ftracenotest.tar.gz" \
+            -C "$STAGE/lib/modules" "$KREL"
+          test -s "$GITHUB_WORKSPACE/modules-ftracenotest.tar.gz"
+
+          echo "Diagnostic module directory: $MODDIR"
+          du -sh "$MODDIR"
+          ls -lh "$GITHUB_WORKSPACE/modules-ftracenotest.tar.gz"
+
+      - name: Upload diagnostic artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daphile-6.12.30-ftrace-startup-test-diagnostic
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            bzImage-ftracenotest
+            modules-ftracenotest.tar.gz
+            config-baseline-reviewed
+            config-diagnostic
+            config-sha256.txt
+            config-diagnostic.diff
+            early-boot-diagnostic-report.txt
+            config-audit/config.candidate
+            config-audit/audit-report.txt
+            linux-6.12.30/.config
+ .config
+            echo
+            echo "CMDLINE_OVERRIDE:"
+            grep -E '^(CONFIG_CMDLINE_OVERRIDE=y|# CONFIG_CMDLINE_OVERRIDE is not set)$' .config || true
+            echo
+            echo "The reviewed baseline config is preserved separately."
+            echo "The normal build workflow and its Release assets are not modified."
+          } | tee "$GITHUB_WORKSPACE/early-boot-diagnostic-report.txt"
+
+      - name: Build diagnostic bzImage and modules
+        working-directory: linux-6.12.30
+        run: |
+          set -Eeuo pipefail
+          export ARCH=x86
+          export CC="ccache gcc"
+          ccache -M 3G
+
+          KREL="$(make -s kernelrelease)"
+          test "$KREL" = "$DIAG_KERNEL_RELEASE"
+
+          make -j"$BUILD_JOBS" bzImage modules
+          test -s arch/x86/boot/bzImage
+          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/bzImage-ftracenotest"
+
+          echo "Built kernel release: $KREL"
+          ls -lh "$GITHUB_WORKSPACE/bzImage-ftracenotest"
+
+      - name: Install modules and generate module dependency metadata
+        working-directory: linux-6.12.30
+        run: |
+          set -Eeuo pipefail
+
+          KREL="$(make -s kernelrelease)"
+          test "$KREL" = "$DIAG_KERNEL_RELEASE"
+
+          STAGE="$GITHUB_WORKSPACE/modules-staging"
+          MODDIR="$STAGE/lib/modules/$KREL"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+
+          make INSTALL_MOD_PATH="$STAGE" modules_install
+          test -d "$MODDIR"
+          rm -f "$MODDIR/build" "$MODDIR/source"
+
+          while IFS= read -r -d '' MODULE; do
+            gzip -t "$MODULE"
+            gzip -d "$MODULE"
+          done < <(find "$MODDIR" -type f -name '*.ko.gz' -print0)
+
+          depmod -a -b "$STAGE" "$KREL"
+          test -s "$MODDIR/modules.dep"
+          test -s "$MODDIR/modules.builtin"
+
+          tar --numeric-owner -czf "$GITHUB_WORKSPACE/modules-ftracenotest.tar.gz" \
+            -C "$STAGE/lib/modules" "$KREL"
+          test -s "$GITHUB_WORKSPACE/modules-ftracenotest.tar.gz"
+
+          echo "Diagnostic module directory: $MODDIR"
+          du -sh "$MODDIR"
+          ls -lh "$GITHUB_WORKSPACE/modules-ftracenotest.tar.gz"
+
+      - name: Upload diagnostic artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daphile-6.12.30-ftrace-startup-test-diagnostic
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            bzImage-ftracenotest
+            modules-ftracenotest.tar.gz
+            config-baseline-reviewed
+            config-diagnostic
+            config-sha256.txt
+            config-diagnostic.diff
+            early-boot-diagnostic-report.txt
+            config-audit/config.candidate
+            config-audit/audit-report.txt
+            linux-6.12.30/.config
+ .config
             echo
             echo "CMDLINE_OVERRIDE:"
             grep -E '^(CONFIG_CMDLINE_OVERRIDE=y|# CONFIG_CMDLINE_OVERRIDE is not set)$' .config || true
