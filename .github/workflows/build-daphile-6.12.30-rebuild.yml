@@ -159,7 +159,7 @@ jobs:
         shell: bash
         working-directory: linux-6.12.30
         env:
-          EXPECTED_CONFIG_SHA256: 8525198ef7700e8a843551d98a582f408a138933fcb25216a212e5865ed980df
+          EXPECTED_CONFIG_SHA256: 1869e4840178f42c8974b8a8caf938b0fcbe17dbf72979f587ba5afc033ce42e
         run: |
           set -Eeuo pipefail
 
