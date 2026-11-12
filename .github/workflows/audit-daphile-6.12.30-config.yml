@@ -16,8 +16,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
-      - name: Checkout
+      - name: Checkout audit reconstruction branch
         uses: actions/checkout@v4
+        with:
+          ref: audit/6.12.30-config-reconstruction
       - name: Install config-generation dependencies
         run: |
           set -euo pipefail
