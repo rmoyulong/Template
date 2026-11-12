@@ -1,0 +1,45 @@
+name: Audit Daphile 6.12.30 Config Candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: daphile-6.12.30-config-audit
+  cancel-in-progress: false
+
+jobs:
+  audit-config:
+    name: Generate and audit candidate config (no kernel build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install config-generation dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses-dev bison flex libssl-dev libelf-dev bc perl python3 rsync
+      - name: Download exact upstream Linux 6.12.30
+        run: |
+          set -euo pipefail
+          wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.30.tar.xz
+          wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc
+          grep 'linux-6.12.30.tar.xz$' sha256sums.asc | sha256sum -c -
+          tar -xJf linux-6.12.30.tar.xz
+          test "$(make -s -C linux-6.12.30 kernelversion)" = "6.12.30"
+      - name: Generate candidate and audit (no compilation)
+        run: |
+          set -euo pipefail
+          cd linux-6.12.30
+          bash ../6.12.30-daphile/reconstruct-daphile-6.12.30-config.sh
+      - name: Upload config audit report
+        uses: actions/upload-artifact@v4
+        with:
+          name: daphile-6.12.30-config-audit
+          path: linux-6.12.30/daphile-config-audit/
+          if-no-files-found: error
+          retention-days: 30
