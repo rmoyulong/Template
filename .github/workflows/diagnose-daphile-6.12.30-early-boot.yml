@@ -110,6 +110,33 @@ jobs:
           make olddefconfig
           make syncconfig
 
+          # Prove that the diagnostic config differs from the reviewed baseline
+          # in exactly two intended symbols: CMDLINE and LOCALVERSION.
+          python3 - <<'PY'
+          import sys
+          def read_config(path):
+              values = {}
+              with open(path, encoding="utf-8") as f:
+                  for line in f:
+                      line = line.rstrip("\\n")
+                      if line.startswith("CONFIG_") and "=" in line:
+                          key, value = line.split("=", 1)
+                          values[key] = value
+                      elif line.startswith("# CONFIG_") and line.endswith(" is not set"):
+                          values[line[2:-11]] = "n"
+              return values
+
+          before = read_config("config-baseline-reviewed")
+          after = read_config(".config")
+          changed = sorted(k for k in set(before) | set(after) if before.get(k, "n") != after.get(k, "n"))
+          expected = ["CONFIG_CMDLINE", "CONFIG_LOCALVERSION"]
+          print("Changed Kconfig symbols:", changed)
+          if changed != expected:
+              print("ERROR: diagnostic build changed unexpected Kconfig symbols", file=sys.stderr)
+              sys.exit(1)
+          PY
+          diff -u config-baseline-reviewed .config > "$GITHUB_WORKSPACE/config-diagnostic.diff" || true
+
           require_config() {
             local symbol="$1"
             local expected="$2"
@@ -238,6 +265,7 @@ jobs:
             config-baseline-reviewed
             config-diagnostic
             config-sha256.txt
+            config-diagnostic.diff
             early-boot-diagnostic-report.txt
             config-audit/config.candidate
             config-audit/audit-report.txt
