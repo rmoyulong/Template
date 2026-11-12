@@ -1,4 +1,4 @@
-name: Diagnose Daphile 6.12.30 Early Boot
+name: Diagnose Daphile 6.12.30 Ftrace Startup Test
 
 on:
   workflow_dispatch:
@@ -7,14 +7,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: daphile-6.12.30-earlyboot-diagnostic
+  group: daphile-6.12.30-ftrace-startup-test-diagnostic
   cancel-in-progress: false
 
 env:
   DAPHILE_DIR: 6.12.30-daphile
   KERNEL_VERSION: 6.12.30
   BASE_KERNEL_RELEASE: 6.12.30-daphile-rebuild
-  DIAG_KERNEL_RELEASE: 6.12.30-daphile-rebuild-earlydiag
+  DIAG_KERNEL_RELEASE: 6.12.30-daphile-rebuild-ftracenotest
   BUILD_JOBS: 3
   EXPECTED_CONFIG_SHA256: 1869e4840178f42c8974b8a8caf938b0fcbe17dbf72979f587ba5afc033ce42e
 
@@ -98,6 +98,10 @@ jobs:
 
           cp .config "$GITHUB_WORKSPACE/config-baseline-reviewed"
 
+          # Disable only ftrace startup selftests. Keep FTRACE, function tracer,
+          # and function_graph tracer enabled for this single-variable test.
+          scripts/config --disable FTRACE_STARTUP_TEST
+
           # x86 EFI stub parses the built-in command line before kernel
           # decompression. efi=debug therefore enables EFI-stub diagnostics.
           # The remaining parameters enable EFI framebuffer earlycon and
@@ -105,13 +109,13 @@ jobs:
           scripts/config --set-str CMDLINE \
             "efi=debug earlycon=efifb keep_bootcon loglevel=8 ignore_loglevel initcall_debug"
           scripts/config --disable CMDLINE_OVERRIDE
-          scripts/config --set-str LOCALVERSION "-daphile-rebuild-earlydiag"
+          scripts/config --set-str LOCALVERSION "-daphile-rebuild-ftracenotest"
 
           make olddefconfig
           make syncconfig
 
           # Prove that the diagnostic config differs from the reviewed baseline
-          # in exactly two intended symbols: CMDLINE and LOCALVERSION.
+          # in exactly three intended symbols: CMDLINE, FTRACE_STARTUP_TEST, and LOCALVERSION.
           python3 - "$GITHUB_WORKSPACE/config-baseline-reviewed" .config <<'PY'
           import sys
           def read_config(path):
@@ -129,7 +133,7 @@ jobs:
           before = read_config(sys.argv[1])
           after = read_config(sys.argv[2])
           changed = sorted(k for k in set(before) | set(after) if before.get(k, "n") != after.get(k, "n"))
-          expected = ["CONFIG_CMDLINE", "CONFIG_LOCALVERSION"]
+          expected = ["CONFIG_CMDLINE", "CONFIG_FTRACE_STARTUP_TEST", "CONFIG_LOCALVERSION"]
           print("Changed Kconfig symbols:", changed)
           if changed != expected:
               print("ERROR: diagnostic build changed unexpected Kconfig symbols", file=sys.stderr)
@@ -163,7 +167,17 @@ jobs:
           require_config CONFIG_HZ_250 y
           require_config CONFIG_HZ 250
           require_config CONFIG_KERNEL_ZSTD y
-          require_config CONFIG_LOCALVERSION '"-daphile-rebuild-earlydiag"'
+          require_config CONFIG_LOCALVERSION '"-daphile-rebuild-ftracenotest"'
+
+          if grep -qx 'CONFIG_FTRACE_STARTUP_TEST=y' .config; then
+            echo "::error::FTRACE_STARTUP_TEST must be disabled for this test"
+            exit 1
+          fi
+          grep -qx '# CONFIG_FTRACE_STARTUP_TEST is not set' .config
+          require_config CONFIG_FTRACE_SELFTEST y
+          require_config CONFIG_FUNCTION_TRACER y
+          require_config CONFIG_FUNCTION_GRAPH_TRACER y
+          require_config CONFIG_DYNAMIC_FTRACE y
 
           if grep -qx 'CONFIG_CMDLINE_OVERRIDE=y' .config; then
             echo "::error::Diagnostic kernel must not override bootloader arguments"
@@ -181,7 +195,7 @@ jobs:
             > "$GITHUB_WORKSPACE/config-sha256.txt"
 
           {
-            echo "Daphile Linux 6.12.30 early-boot diagnostic build"
+            echo "Daphile Linux 6.12.30 ftrace-startup-test diagnostic build"
             echo "================================================="
             echo "Reviewed baseline SHA256: $EXPECTED_CONFIG_SHA256"
             echo "Diagnostic kernel release: $KREL"
@@ -191,7 +205,8 @@ jobs:
             grep '^CONFIG_CMDLINE=' .config
             echo
             echo "Diagnostic settings:"
-            grep -E '^(CONFIG_(CMDLINE_BOOL|EARLY_PRINTK|EFI|EFI_STUB|EFI_EARLYCON|SERIAL_EARLYCON|X86_VERBOSE_BOOTUP|PRINTK_TIME|PREEMPT_RT|HZ_250|HZ|KERNEL_ZSTD|LOCALVERSION))=' .config
+            grep -E '^(CONFIG_(CMDLINE_BOOL|EARLY_PRINTK|EFI|EFI_STUB|EFI_EARLYCON|SERIAL_EARLYCON|X86_VERBOSE_BOOTUP|PRINTK_TIME|PREEMPT_RT|HZ_250|HZ|KERNEL_ZSTD|LOCALVERSION|FTRACE_SELFTEST|FUNCTION_TRACER|FUNCTION_GRAPH_TRACER|DYNAMIC_FTRACE))=' .config
+            grep -E '^(CONFIG_FTRACE_STARTUP_TEST=y|# CONFIG_FTRACE_STARTUP_TEST is not set)
             echo
             echo "CMDLINE_OVERRIDE:"
             grep -E '^(CONFIG_CMDLINE_OVERRIDE=y|# CONFIG_CMDLINE_OVERRIDE is not set)$' .config || true
@@ -213,10 +228,10 @@ jobs:
 
           make -j"$BUILD_JOBS" bzImage modules
           test -s arch/x86/boot/bzImage
-          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/bzImage-earlydiag"
+          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/bzImage-ftracenotest"
 
           echo "Built kernel release: $KREL"
-          ls -lh "$GITHUB_WORKSPACE/bzImage-earlydiag"
+          ls -lh "$GITHUB_WORKSPACE/bzImage-ftracenotest"
 
       - name: Install modules and generate module dependency metadata
         working-directory: linux-6.12.30
@@ -244,24 +259,103 @@ jobs:
           test -s "$MODDIR/modules.dep"
           test -s "$MODDIR/modules.builtin"
 
-          tar --numeric-owner -czf "$GITHUB_WORKSPACE/modules-earlydiag.tar.gz" \
+          tar --numeric-owner -czf "$GITHUB_WORKSPACE/modules-ftracenotest.tar.gz" \
             -C "$STAGE/lib/modules" "$KREL"
-          test -s "$GITHUB_WORKSPACE/modules-earlydiag.tar.gz"
+          test -s "$GITHUB_WORKSPACE/modules-ftracenotest.tar.gz"
 
           echo "Diagnostic module directory: $MODDIR"
           du -sh "$MODDIR"
-          ls -lh "$GITHUB_WORKSPACE/modules-earlydiag.tar.gz"
+          ls -lh "$GITHUB_WORKSPACE/modules-ftracenotest.tar.gz"
 
       - name: Upload diagnostic artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: daphile-6.12.30-early-boot-diagnostic
+          name: daphile-6.12.30-ftrace-startup-test-diagnostic
           if-no-files-found: warn
           retention-days: 14
           path: |
-            bzImage-earlydiag
-            modules-earlydiag.tar.gz
+            bzImage-ftracenotest
+            modules-ftracenotest.tar.gz
+            config-baseline-reviewed
+            config-diagnostic
+            config-sha256.txt
+            config-diagnostic.diff
+            early-boot-diagnostic-report.txt
+            config-audit/config.candidate
+            config-audit/audit-report.txt
+            linux-6.12.30/.config
+ .config
+            echo
+            echo "CMDLINE_OVERRIDE:"
+            grep -E '^(CONFIG_CMDLINE_OVERRIDE=y|# CONFIG_CMDLINE_OVERRIDE is not set)$' .config || true
+            echo
+            echo "The reviewed baseline config is preserved separately."
+            echo "The normal build workflow and its Release assets are not modified."
+          } | tee "$GITHUB_WORKSPACE/early-boot-diagnostic-report.txt"
+
+      - name: Build diagnostic bzImage and modules
+        working-directory: linux-6.12.30
+        run: |
+          set -Eeuo pipefail
+          export ARCH=x86
+          export CC="ccache gcc"
+          ccache -M 3G
+
+          KREL="$(make -s kernelrelease)"
+          test "$KREL" = "$DIAG_KERNEL_RELEASE"
+
+          make -j"$BUILD_JOBS" bzImage modules
+          test -s arch/x86/boot/bzImage
+          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/bzImage-ftracenotest"
+
+          echo "Built kernel release: $KREL"
+          ls -lh "$GITHUB_WORKSPACE/bzImage-ftracenotest"
+
+      - name: Install modules and generate module dependency metadata
+        working-directory: linux-6.12.30
+        run: |
+          set -Eeuo pipefail
+
+          KREL="$(make -s kernelrelease)"
+          test "$KREL" = "$DIAG_KERNEL_RELEASE"
+
+          STAGE="$GITHUB_WORKSPACE/modules-staging"
+          MODDIR="$STAGE/lib/modules/$KREL"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+
+          make INSTALL_MOD_PATH="$STAGE" modules_install
+          test -d "$MODDIR"
+          rm -f "$MODDIR/build" "$MODDIR/source"
+
+          while IFS= read -r -d '' MODULE; do
+            gzip -t "$MODULE"
+            gzip -d "$MODULE"
+          done < <(find "$MODDIR" -type f -name '*.ko.gz' -print0)
+
+          depmod -a -b "$STAGE" "$KREL"
+          test -s "$MODDIR/modules.dep"
+          test -s "$MODDIR/modules.builtin"
+
+          tar --numeric-owner -czf "$GITHUB_WORKSPACE/modules-ftracenotest.tar.gz" \
+            -C "$STAGE/lib/modules" "$KREL"
+          test -s "$GITHUB_WORKSPACE/modules-ftracenotest.tar.gz"
+
+          echo "Diagnostic module directory: $MODDIR"
+          du -sh "$MODDIR"
+          ls -lh "$GITHUB_WORKSPACE/modules-ftracenotest.tar.gz"
+
+      - name: Upload diagnostic artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daphile-6.12.30-ftrace-startup-test-diagnostic
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            bzImage-ftracenotest
+            modules-ftracenotest.tar.gz
             config-baseline-reviewed
             config-diagnostic
             config-sha256.txt
