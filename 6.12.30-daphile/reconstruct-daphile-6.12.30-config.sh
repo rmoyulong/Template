@@ -112,6 +112,7 @@ scripts/config --disable IMA_APPRAISE_MODSIG
 scripts/config --disable MAXSMP
 scripts/config --set-val NR_CPUS 8
 scripts/config --disable ACPI_REDUCED_HARDWARE_ONLY
+scripts/config --disable X86_VSMP
 scripts/config --set-val X86_INTERNODE_CACHE_SHIFT 6
 scripts/config --disable BOOT_CONFIG
 scripts/config --disable BOOT_CONFIG_EMBED
@@ -140,7 +141,36 @@ sha256sum "$OUT/config.candidate" | tee "$OUT/config.sha256"
   grep -E '^(CONFIG_(PREEMPT_RT|HIGH_RES_TIMERS|HZ_250|HZ|KERNEL_ZSTD|LOCALVERSION|LOCALVERSION_AUTO|MODULE_SIG_ALL|MODULE_SIG_FORCE|SYSTEM_TRUSTED_KEYS|SYSTEM_REVOCATION_KEYS))=' .config || true
   echo
   echo "[Known original values restored]"
-  grep -E '^(CONFIG_NR_CPUS=|CONFIG_X86_INTERNODE_CACHE_SHIFT=|CONFIG_X86_INTEL_TSX_MODE_AUTO=y)$' .config || true
+  grep -E '^(CONFIG_NR_CPUS=[0-9]+|CONFIG_X86_INTERNODE_CACHE_SHIFT=[0-9]+|CONFIG_X86_INTEL_TSX_MODE_AUTO=y)
+  echo
+  echo "[Known original options expected unset]"
+  grep -E '^# CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF) is not set$' .config || true
+  echo
+  echo "[Review only; not changed without sufficient evidence]"
+  grep -E '^(CONFIG_(X86_INTEL_MID|HYPERV|IRQ_TIME_ACCOUNTING))=' .config || true
+  echo
+  echo "[Unresolved localyesconfig/localmodconfig warnings]"
+  cat "$OUT/localyesconfig.warnings.log" "$OUT/localmodconfig.warnings.log"
+} | tee "$OUT/audit-report.txt"
+
+# Fail on required project settings or known-value restoration regressions.
+grep -qx 'CONFIG_PREEMPT_RT=y' .config
+grep -qx 'CONFIG_HIGH_RES_TIMERS=y' .config
+grep -qx 'CONFIG_HZ_250=y' .config
+grep -qx 'CONFIG_HZ=250' .config
+grep -qx 'CONFIG_KERNEL_ZSTD=y' .config
+grep -qx 'CONFIG_LOCALVERSION="-daphile-rebuild"' .config
+grep -qx 'CONFIG_NR_CPUS=8' .config
+grep -qx 'CONFIG_X86_INTERNODE_CACHE_SHIFT=6' .config
+! grep -qx 'CONFIG_X86_VSMP=y' .config
+grep -qx 'CONFIG_X86_INTEL_TSX_MODE_AUTO=y' .config
+! grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF)=y$' .config
+! grep -qE '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config
+! grep -qE '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config || true
   echo
   echo "[Known original options expected unset]"
   grep -E '^# CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF) is not set$' .config || true
