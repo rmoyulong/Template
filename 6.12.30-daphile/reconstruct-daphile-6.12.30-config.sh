@@ -126,11 +126,11 @@ scripts/config --enable X86_INTEL_TSX_MODE_AUTO
 # Record the state after scripts/config and before Kconfig normalization.
 cp .config "$OUT/config.pre-olddefconfig"
 {
-  echo "[BOOT_CONFIG before olddefconfig]"
-  grep -E '^(CONFIG_BOOT_CONFIG=|# CONFIG_BOOT_CONFIG is not set$)' .config || true
+  echo "[BOOT_CONFIG / BOOTTIME_TRACING before olddefconfig]"
+  grep -E '^(CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING)=|# CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING) is not set$)' .config || true
 } > "$OUT/boot-config-state.log"
 if grep -qE '^CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING)=y$' .config; then
-  echo "ERROR: scripts/config --disable BOOT_CONFIG did not take effect" >&2
+  echo "ERROR: BOOT_CONFIG or BOOTTIME_TRACING remained enabled after scripts/config" >&2
   exit 1
 fi
 
@@ -141,11 +141,11 @@ make syncconfig
 # Record whether Kconfig normalization re-enabled any forbidden option.
 cp .config "$OUT/config.post-olddefconfig"
 {
-  echo "[BOOT_CONFIG after olddefconfig + syncconfig]"
-  grep -E '^(CONFIG_BOOT_CONFIG=|# CONFIG_BOOT_CONFIG is not set$)' .config || true
+  echo "[BOOT_CONFIG / BOOTTIME_TRACING after olddefconfig + syncconfig]"
+  grep -E '^(CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING)=|# CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING) is not set$)' .config || true
 } >> "$OUT/boot-config-state.log"
 if grep -qE '^CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING)=y$' .config; then
-  echo "ERROR: BOOT_CONFIG was re-enabled by Kconfig normalization" >&2
+  echo "ERROR: BOOT_CONFIG or its BOOTTIME_TRACING selector was re-enabled by Kconfig normalization" >&2
   echo "See $OUT/boot-config-state.log and config.post-olddefconfig" >&2
   exit 1
 fi
