@@ -206,7 +206,7 @@ jobs:
             echo
             echo "Diagnostic settings:"
             grep -E '^(CONFIG_(CMDLINE_BOOL|EARLY_PRINTK|EFI|EFI_STUB|EFI_EARLYCON|SERIAL_EARLYCON|X86_VERBOSE_BOOTUP|PRINTK_TIME|PREEMPT_RT|HZ_250|HZ|KERNEL_ZSTD|LOCALVERSION|FTRACE_SELFTEST|FUNCTION_TRACER|FUNCTION_GRAPH_TRACER|DYNAMIC_FTRACE))=' .config
-            grep -E '^(CONFIG_FTRACE_STARTUP_TEST=y|# CONFIG_FTRACE_STARTUP_TEST is not set)
+            grep 'FTRACE_STARTUP_TEST' .config
             echo "CMDLINE_OVERRIDE:"
             grep -E '^(CONFIG_CMDLINE_OVERRIDE=y|# CONFIG_CMDLINE_OVERRIDE is not set)$' .config || true
             echo
