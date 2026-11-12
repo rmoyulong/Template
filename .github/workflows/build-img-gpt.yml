@@ -53,6 +53,11 @@ jobs:
 
       - name: Download rootfs, modules, bzImage
         run: |
+          set -euo pipefail
+          if [ "$KERNEL_VERSION" != "$KERNEL_RELEASE" ]; then
+            echo "::error::此打包 workflow 固定使用 $KERNEL_RELEASE"
+            exit 1
+          fi
           mkdir -p "$WORK_DIR"
           cd "$WORK_DIR"
           wget -q -O rootfs.tar.gz "$ROOTFS_URL"
@@ -170,8 +175,7 @@ jobs:
           mkdir -p /tmp/modules-extract
           sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /tmp/modules-extract
 
-          # 版本号不写死：直接读包内顶层目录名（如 7.3.3-rt）
-          #   若给模块化版单独设了 LOCALVERSION（如 -rt-mod），这里会自动识别
+          # 从 modules.tar.gz 读取顶层目录名，并与固定的 6.12.30-daphile-rebuild 核对。
           KVER=""
           for d in /tmp/modules-extract/*/; do
             [ -d "$d" ] || continue
@@ -182,7 +186,7 @@ jobs:
             [0-9]*.[0-9]*) ;;
             *)
               echo "ERROR: 无法从 modules.tar.gz 识别版本目录（读到: '${KVER}'）"
-              echo "       包内顶层应为 7.3.3 / 7.3.3-rt 这类目录"
+              echo "       本 workflow 预期目录为 $KERNEL_RELEASE"
               ls -la /tmp/modules-extract
               exit 1
               ;;
