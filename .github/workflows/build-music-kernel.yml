@@ -24,6 +24,7 @@ jobs:
       ARCH: x86
       BUILD_JOBS: 2
       KERNEL_VERSION: "7.3.4"
+      KERNEL_SUFFIX: -music
 
     steps:
       - name: 检出仓库
@@ -154,6 +155,9 @@ jobs:
           
           ./scripts/config --enable PREEMPT_RT
           ./scripts/config --enable HIGH_RES_TIMERS
+
+          # Use HZ=250 for the 6.12.30 rebuild.
+          ./scripts/config --enable HZ_250
           
           # ALSA core: built-in.
           
@@ -176,14 +180,15 @@ jobs:
           ./scripts/config --module SND_INTEL_DSP_CONFIG
           
           # Kernel compression: ZSTD.
-          
+
           ./scripts/config --enable KERNEL_ZSTD
-          
+
           # Kernel version suffix.
           # Set suffix ONLY in .config.
           # Do NOT pass LOCALVERSION to make later.
-         
-          # Resolve Kconfig dependencies.
+
+          ./scripts/config --set-str LOCALVERSION "$KERNEL_SUFFIX"
+          ./scripts/config --disable LOCALVERSION_AUTO
           
           echo
           echo "===== KCONFIG OLDDEFCONFIG ====="
