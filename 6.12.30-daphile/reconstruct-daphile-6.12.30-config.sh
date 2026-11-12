@@ -120,9 +120,33 @@ scripts/config --disable BOOT_CONFIG_FORCE
 scripts/config --disable X86_INTEL_TSX_MODE_OFF
 scripts/config --enable X86_INTEL_TSX_MODE_AUTO
 
+# Record the state after scripts/config and before Kconfig normalization.
+cp .config "$OUT/config.pre-olddefconfig"
+{
+  echo "[BOOT_CONFIG before olddefconfig]"
+  grep -E '^(CONFIG_BOOT_CONFIG=|# CONFIG_BOOT_CONFIG is not set$)' .config || true
+} > "$OUT/boot-config-state.log"
+if grep -qx 'CONFIG_BOOT_CONFIG=y' .config; then
+  echo "ERROR: scripts/config --disable BOOT_CONFIG did not take effect" >&2
+  exit 1
+fi
+
 KCONFIG_WARN_UNKNOWN_SYMBOLS=1 make olddefconfig \
   2> "$OUT/olddefconfig.stderr.log"
 make syncconfig
+
+# Record whether Kconfig normalization re-enabled any forbidden option.
+cp .config "$OUT/config.post-olddefconfig"
+{
+  echo "[BOOT_CONFIG after olddefconfig + syncconfig]"
+  grep -E '^(CONFIG_BOOT_CONFIG=|# CONFIG_BOOT_CONFIG is not set$)' .config || true
+} >> "$OUT/boot-config-state.log"
+if grep -qx 'CONFIG_BOOT_CONFIG=y' .config; then
+  echo "ERROR: BOOT_CONFIG was re-enabled by Kconfig normalization" >&2
+  echo "See $OUT/boot-config-state.log and config.post-olddefconfig" >&2
+  exit 1
+fi
+
 cp .config "$OUT/config.candidate"
 sha256sum "$OUT/config.candidate" | tee "$OUT/config.sha256"
 
@@ -162,11 +186,51 @@ grep -qx 'CONFIG_KERNEL_ZSTD=y' .config
 grep -qx 'CONFIG_LOCALVERSION="-daphile-rebuild"' .config
 grep -qx 'CONFIG_NR_CPUS=8' .config
 grep -qx 'CONFIG_X86_INTERNODE_CACHE_SHIFT=6' .config
-! grep -qx 'CONFIG_X86_VSMP=y' .config
+if grep -qx 'CONFIG_X86_VSMP=y' .config; then
+  echo "ERROR: CONFIG_X86_VSMP must be disabled" >&2
+  exit 1
+fi
 grep -qx 'CONFIG_X86_INTEL_TSX_MODE_AUTO=y' .config
-! grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF)=y$' .config
-! grep -qE '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config
-! grep -qE '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config
+
+if grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF)=y
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config; then
+  echo "ERROR: a known-original-unset option is enabled:" >&2
+  grep -E '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF)=y
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config; then
+  echo "ERROR: an unapproved kernel compression option is enabled:" >&2
+  grep -E '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config; then
+  echo "ERROR: a disallowed module-signature option is enabled:" >&2
+  grep -E '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config >&2
+  exit 1
+fi
 
 echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
 echo "Output directory: $OUT"
