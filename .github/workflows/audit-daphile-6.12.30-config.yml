@@ -41,7 +41,7 @@ jobs:
           cd "$GITHUB_WORKSPACE/linux-6.12.30"
           bash ../6.12.30-daphile/reconstruct-daphile-6.12.30-config.sh
           echo "===== AUDIT OUTPUT FILES ====="
-          find "$AUDIT_OUT" -maxdepth 2 -type f -printf '%p (%s bytes)\\n' | sort
+          find "$AUDIT_OUT" -maxdepth 2 -type f -print | sort
           test -s "$AUDIT_OUT/config.candidate"
           test -s "$AUDIT_OUT/config.sha256"
           test -s "$AUDIT_OUT/audit-report.txt"
@@ -53,7 +53,9 @@ jobs:
           echo "===== EXPECTED OUTPUT ====="
           ls -la "$GITHUB_WORKSPACE/daphile-config-audit"
           echo "===== SEARCH FOR AUDIT FILES ====="
-          find "$GITHUB_WORKSPACE" -maxdepth 5 -type f \\( -name 'config.candidate' -o -name 'audit-report.txt' -o -name 'config.sha256' \\) -print
+          find "$GITHUB_WORKSPACE" -maxdepth 5 -type f -name 'config.candidate' -print
+          find "$GITHUB_WORKSPACE" -maxdepth 5 -type f -name 'audit-report.txt' -print
+          find "$GITHUB_WORKSPACE" -maxdepth 5 -type f -name 'config.sha256' -print
           echo "===== DIRECTORY TREE ====="
           find "$GITHUB_WORKSPACE" -maxdepth 3 -type d -name '*audit*' -print
       - name: Upload config audit report
