@@ -87,6 +87,12 @@ run_local "$MODS" localmodconfig
 cp .config "$OUT/config.localmodconfig"
 
 # Merge the inferred built-ins and the small evidence-backed project fragment.
+# The official loadable-module inventory contains the BYTCR RT5640/RT5651
+# machine drivers, but not the BYTCR WM5102 machine driver. localmodconfig
+# can enable this unrelated sibling option through dependency closure; keep
+# the candidate constrained to the observed official module inventory.
+scripts/config --disable SND_SOC_INTEL_BYTCR_WM5102_MACH
+
 scripts/kconfig/merge_config.sh -m -O . .config \
   "$OUT/inferred-builtin-y.fragment" "$FRAGMENT"
 
