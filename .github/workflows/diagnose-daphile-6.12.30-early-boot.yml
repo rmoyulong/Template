@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: daphile-6.12.30-ftrace-startup-test-diagnostic
@@ -66,12 +67,20 @@ jobs:
           cd linux-6.12.30
           test "$(make -s kernelversion)" = "$KERNEL_VERSION"
 
-      - name: Reconstruct and verify the exact reviewed baseline
+      - name: Download and verify the previously reviewed baseline
         working-directory: linux-6.12.30
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
-          AUDIT_OUT="$GITHUB_WORKSPACE/config-audit" \
-            bash "../$DAPHILE_DIR/reconstruct-daphile-6.12.30-config.sh"
+
+          # Use the exact candidate produced by the successful, reviewed
+          # config-audit run. Do not regenerate it with localmodconfig:
+          # streamline_config.pl can make different select-provider choices.
+          gh run download 43206623200 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name daphile-6.12.30-config-audit \
+            --dir "$GITHUB_WORKSPACE/config-audit"
 
           CANDIDATE="$GITHUB_WORKSPACE/config-audit/config.candidate"
           test -s "$CANDIDATE"
