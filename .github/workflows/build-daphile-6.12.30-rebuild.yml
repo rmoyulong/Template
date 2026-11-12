@@ -643,6 +643,8 @@ jobs:
           test -f "$GITHUB_WORKSPACE/depmod-debug.log"
           test -f "$GITHUB_WORKSPACE/depmod-dry-run.txt"
           test -s "$GITHUB_WORKSPACE/inventory-comparison.txt"
+          test -s "$GITHUB_WORKSPACE/config-audit-report.txt"
+          test -s "$GITHUB_WORKSPACE/config-audited-candidate"
           
           # Verify final configuration.
 
@@ -674,6 +676,8 @@ jobs:
             depmod-debug.log \
             depmod-dry-run.txt \
             inventory-comparison.txt \
+            config-audit-report.txt \
+            config-audited-candidate \
             > SHA256SUMS.txt
 
           echo "=================================="
@@ -687,6 +691,8 @@ jobs:
             depmod-debug.log \
             depmod-dry-run.txt \
             inventory-comparison.txt \
+            config-audit-report.txt \
+            config-audited-candidate \
             SHA256SUMS.txt
 
           echo
@@ -750,6 +756,8 @@ jobs:
             depmod-debug.log
             depmod-dry-run.txt
             inventory-comparison.txt
+            config-audit-report.txt
+            config-audited-candidate
             modules-missing-from-build.txt
             modules-extra-in-build.txt
             builtin-missing-from-build.txt
