@@ -154,6 +154,20 @@ jobs:
           if changed != expected:
               print("ERROR: diagnostic build changed unexpected Kconfig symbols", file=sys.stderr)
               sys.exit(1)
+
+          # Kconfig may omit disabled symbols entirely instead of writing
+          # an explicit "# CONFIG_FOO is not set" line. Missing means n.
+          disabled_helpers = [
+              "CONFIG_FTRACE_STARTUP_TEST",
+              "CONFIG_FTRACE_SELFTEST",
+              "CONFIG_EVENT_TRACE_STARTUP_TEST",
+              "CONFIG_EVENT_TRACE_TEST_SYSCALLS",
+          ]
+          for symbol in disabled_helpers:
+              value = after.get(symbol, "n")
+              if value != "n":
+                  print(f"ERROR: {symbol} must be disabled, got {value}", file=sys.stderr)
+                  sys.exit(1)
           PY
           diff -u "$GITHUB_WORKSPACE/config-baseline-reviewed" .config > "$GITHUB_WORKSPACE/config-diagnostic.diff" || true
 
@@ -185,14 +199,8 @@ jobs:
           require_config CONFIG_KERNEL_ZSTD y
           require_config CONFIG_LOCALVERSION '"-daphile-rebuild-ftracenotest"'
 
-          if grep -qx 'CONFIG_FTRACE_STARTUP_TEST=y' .config; then
-            echo "::error::FTRACE_STARTUP_TEST must be disabled for this test"
-            exit 1
-          fi
-          grep -qx '# CONFIG_FTRACE_STARTUP_TEST is not set' .config
-          grep -qx '# CONFIG_FTRACE_SELFTEST is not set' .config
-          grep -qx '# CONFIG_EVENT_TRACE_STARTUP_TEST is not set' .config
-          grep -qx '# CONFIG_EVENT_TRACE_TEST_SYSCALLS is not set' .config
+          # The Python config parser above verifies these options are n;
+          # some Kconfig-disabled helper symbols are absent from .config.
           require_config CONFIG_FUNCTION_TRACER y
           require_config CONFIG_FUNCTION_GRAPH_TRACER y
           require_config CONFIG_DYNAMIC_FTRACE y
