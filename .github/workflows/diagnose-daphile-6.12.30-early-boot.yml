@@ -135,7 +135,7 @@ jobs:
               print("ERROR: diagnostic build changed unexpected Kconfig symbols", file=sys.stderr)
               sys.exit(1)
           PY
-          diff -u config-baseline-reviewed .config > "$GITHUB_WORKSPACE/config-diagnostic.diff" || true
+          diff -u "$GITHUB_WORKSPACE/config-baseline-reviewed" .config > "$GITHUB_WORKSPACE/config-diagnostic.diff" || true
 
           require_config() {
             local symbol="$1"
