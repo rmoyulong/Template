@@ -304,6 +304,16 @@ jobs:
           ./scripts/config --enable PREEMPT_RT
           ./scripts/config --enable HIGH_RES_TIMERS
 
+          # Use HZ=250 for the 6.12.30 rebuild.
+          ./scripts/config --enable HZ_250
+
+          # Disable module signing and certificate requirements completely.
+          ./scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
+          ./scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
+          ./scripts/config --disable MODULE_SIG
+          ./scripts/config --disable MODULE_SIG_ALL
+          ./scripts/config --disable MODULE_SIG_FORCE
+
           # ALSA core: built-in.
 
           ./scripts/config --enable SOUND
@@ -478,10 +488,13 @@ jobs:
           }
           
           # Module signing verification
-          require_config CONFIG_MODULE_SIG y
-          require_config CONFIG_MODULE_SIG_FORCE y
-          require_config CONFIG_MODULE_SIG_ALL y
+          # Verify module signing is fully disabled.
+          if grep -qE '^CONFIG_MODULE_SIG(_ALL|_FORCE)?=y$' .config; then
+            echo "::error::Module signing must be disabled"
+            exit 1
+          fi
           require_config CONFIG_SYSTEM_TRUSTED_KEYS '""'
+          require_config CONFIG_SYSTEM_REVOCATION_KEYS '""'
 
           require_config CONFIG_X86_64 y
           require_config CONFIG_SMP y
@@ -489,6 +502,8 @@ jobs:
           require_config CONFIG_MODULES y
           require_config CONFIG_MODULE_UNLOAD y
           require_config CONFIG_HIGH_RES_TIMERS y
+          require_config CONFIG_HZ_250 y
+          require_config CONFIG_HZ 250
 
           require_config CONFIG_LOCALVERSION '"-daphile-rebuild"'
 
@@ -635,32 +650,6 @@ jobs:
             exit 1
           fi
           
-          echo "===== MODULE SIGNATURE VERIFICATION ====="
-
-            SIGN_MODULE="$MODDIR/kernel/sound/pci/hda/snd-hda-intel.ko"
-
-            if [[ ! -s "$SIGN_MODULE" ]]; then
-                echo "::error::snd-hda-intel.ko not found"
-                exit 1
-            fi
-
-            modinfo -F signer "$SIGN_MODULE"
-            modinfo -F sig_key "$SIGN_MODULE"
-            modinfo -F sig_hashalgo "$SIGN_MODULE"
-
-            SIGNER="$(modinfo -F signer "$SIGN_MODULE")"
-            SIG_KEY="$(modinfo -F sig_key "$SIGN_MODULE")"
-
-            if [[ -z "$SIGNER" || -z "$SIG_KEY" ]]; then
-                echo "::error::snd-hda-intel.ko is not signed"
-                exit 1
-            fi
-
-            echo "Module signer: $SIGNER"
-            echo "Module key ID: $SIG_KEY"
-            echo "Module signature verification metadata present"
-
-          echo
           echo "===== MODULE FILE SAMPLES ====="
           find "$MODDIR/kernel" -type f \
             \( -name '*.ko' -o -name '*.ko.gz' -o -name '*.ko.xz' -o -name '*.ko.zst' \) \
@@ -929,23 +918,21 @@ jobs:
           test -f "$GITHUB_WORKSPACE/depmod-dry-run.txt"
           test -s "$GITHUB_WORKSPACE/inventory-comparison.txt"
           
-            echo "===== EXPORT PUBLIC SIGNING CERTIFICATE ====="
-
-            if [[ -s certs/signing_key.x509 ]]; then
-                cp certs/signing_key.x509 \
-                   "$GITHUB_WORKSPACE/signing_key.x509"
-
-                echo "Public signing certificate exported"
-            else
-                echo "::error::signing_key.x509 not found"
-                exit 1
-            fi          
-
           # Verify final configuration.
 
           grep -q '^CONFIG_KERNEL_ZSTD=y$' "$GITHUB_WORKSPACE/config"
 
           grep -q '^CONFIG_PREEMPT_RT=y$' "$GITHUB_WORKSPACE/config"
+          grep -q '^CONFIG_HZ_250=y$' "$GITHUB_WORKSPACE/config"
+          grep -q '^CONFIG_HZ=250$' "$GITHUB_WORKSPACE/config"
+
+          if grep -qE '^CONFIG_MODULE_SIG(_ALL|_FORCE)?=y$' "$GITHUB_WORKSPACE/config"; then
+            echo "::error::Module signing unexpectedly enabled in exported config"
+            exit 1
+          fi
+
+          grep -q '^CONFIG_SYSTEM_TRUSTED_KEYS=""$' "$GITHUB_WORKSPACE/config"
+          grep -q '^CONFIG_SYSTEM_REVOCATION_KEYS=""$' "$GITHUB_WORKSPACE/config"
 
           grep -q '^CONFIG_LOCALVERSION="-daphile-rebuild"$' "$GITHUB_WORKSPACE/config"
 
