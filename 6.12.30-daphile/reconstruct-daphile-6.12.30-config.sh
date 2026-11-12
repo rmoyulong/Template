@@ -114,6 +114,9 @@ scripts/config --set-val NR_CPUS 8
 scripts/config --disable ACPI_REDUCED_HARDWARE_ONLY
 scripts/config --disable X86_VSMP
 scripts/config --set-val X86_INTERNODE_CACHE_SHIFT 6
+# BOOTTIME_TRACING selects BOOT_CONFIG in kernel/trace/Kconfig. It is not
+# present in the official built-in inventory and is not needed for this build.
+scripts/config --disable BOOTTIME_TRACING
 scripts/config --disable BOOT_CONFIG
 scripts/config --disable BOOT_CONFIG_EMBED
 scripts/config --disable BOOT_CONFIG_FORCE
@@ -126,7 +129,7 @@ cp .config "$OUT/config.pre-olddefconfig"
   echo "[BOOT_CONFIG before olddefconfig]"
   grep -E '^(CONFIG_BOOT_CONFIG=|# CONFIG_BOOT_CONFIG is not set$)' .config || true
 } > "$OUT/boot-config-state.log"
-if grep -qx 'CONFIG_BOOT_CONFIG=y' .config; then
+if grep -qE '^CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING)=y
   echo "ERROR: scripts/config --disable BOOT_CONFIG did not take effect" >&2
   exit 1
 fi
@@ -142,6 +145,90 @@ cp .config "$OUT/config.post-olddefconfig"
   grep -E '^(CONFIG_BOOT_CONFIG=|# CONFIG_BOOT_CONFIG is not set$)' .config || true
 } >> "$OUT/boot-config-state.log"
 if grep -qx 'CONFIG_BOOT_CONFIG=y' .config; then
+  echo "ERROR: BOOT_CONFIG was re-enabled by Kconfig normalization" >&2
+  echo "See $OUT/boot-config-state.log and config.post-olddefconfig" >&2
+  exit 1
+fi
+
+cp .config "$OUT/config.candidate"
+sha256sum "$OUT/config.candidate" | tee "$OUT/config.sha256"
+
+{
+  echo "Linux source: $(make -s kernelversion)"
+  echo "Kernel release: $(make -s kernelrelease)"
+  echo "Official loadable .ko inventory entries: $MOD_COUNT"
+  echo "Official built-in inventory entries: $BUILTIN_COUNT"
+  echo "Official built-in .paths entries: $BUILTIN_PATH_COUNT"
+  echo "Unique inferred builtin y symbols: $(wc -l < "$OUT/inferred-builtin-y.fragment")"
+  echo "localyesconfig warnings: $(wc -l < "$OUT/localyesconfig.warnings.log")"
+  echo "localmodconfig warnings: $(wc -l < "$OUT/localmodconfig.warnings.log")"
+  echo "Candidate config SHA256: $(sha256sum "$OUT/config.candidate" | awk '{print $1}')"
+  echo
+  echo "[Required project settings]"
+  grep -E '^(CONFIG_(PREEMPT_RT|HIGH_RES_TIMERS|HZ_250|HZ|KERNEL_ZSTD|LOCALVERSION|LOCALVERSION_AUTO|MODULE_SIG_ALL|MODULE_SIG_FORCE|SYSTEM_TRUSTED_KEYS|SYSTEM_REVOCATION_KEYS))=' .config || true
+  echo
+  echo "[Known original values restored]"
+  grep -E '^(CONFIG_NR_CPUS=[0-9]+|CONFIG_X86_INTERNODE_CACHE_SHIFT=[0-9]+|CONFIG_X86_INTEL_TSX_MODE_AUTO=y)$' .config || true
+  echo
+  echo "[Known original options expected unset]"
+  grep -E '^# CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF) is not set
+  echo
+  echo "[Review only; not changed without sufficient evidence]"
+  grep -E '^(CONFIG_(X86_INTEL_MID|HYPERV|IRQ_TIME_ACCOUNTING))=' .config || true
+  echo
+  echo "[Unresolved localyesconfig/localmodconfig warnings]"
+  cat "$OUT/localyesconfig.warnings.log" "$OUT/localmodconfig.warnings.log"
+} | tee "$OUT/audit-report.txt"
+
+# Fail on required project settings or known-value restoration regressions.
+grep -qx 'CONFIG_PREEMPT_RT=y' .config
+grep -qx 'CONFIG_HIGH_RES_TIMERS=y' .config
+grep -qx 'CONFIG_HZ_250=y' .config
+grep -qx 'CONFIG_HZ=250' .config
+grep -qx 'CONFIG_KERNEL_ZSTD=y' .config
+grep -qx 'CONFIG_LOCALVERSION="-daphile-rebuild"' .config
+grep -qx 'CONFIG_NR_CPUS=8' .config
+grep -qx 'CONFIG_X86_INTERNODE_CACHE_SHIFT=6' .config
+if grep -qx 'CONFIG_X86_VSMP=y' .config; then
+  echo "ERROR: CONFIG_X86_VSMP must be disabled" >&2
+  exit 1
+fi
+grep -qx 'CONFIG_X86_INTEL_TSX_MODE_AUTO=y' .config
+
+if grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config; then
+  echo "ERROR: a known-original-unset option or unsupported BOOT_CONFIG selector is enabled:" >&2
+  grep -E '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config; then
+  echo "ERROR: an unapproved kernel compression option is enabled:" >&2
+  grep -E '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config; then
+  echo "ERROR: a disallowed module-signature option is enabled:" >&2
+  grep -E '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config >&2
+  exit 1
+fi
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config; then
+  echo "ERROR: scripts/config --disable BOOT_CONFIG did not take effect" >&2
+  exit 1
+fi
+
+KCONFIG_WARN_UNKNOWN_SYMBOLS=1 make olddefconfig \
+  2> "$OUT/olddefconfig.stderr.log"
+make syncconfig
+
+# Record whether Kconfig normalization re-enabled any forbidden option.
+cp .config "$OUT/config.post-olddefconfig"
+{
+  echo "[BOOT_CONFIG after olddefconfig + syncconfig]"
+  grep -E '^(CONFIG_BOOT_CONFIG=|# CONFIG_BOOT_CONFIG is not set$)' .config || true
+} >> "$OUT/boot-config-state.log"
+if grep -qE '^CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING)=y
   echo "ERROR: BOOT_CONFIG was re-enabled by Kconfig normalization" >&2
   echo "See $OUT/boot-config-state.log and config.post-olddefconfig" >&2
   exit 1
@@ -192,9 +279,471 @@ if grep -qx 'CONFIG_X86_VSMP=y' .config; then
 fi
 grep -qx 'CONFIG_X86_INTEL_TSX_MODE_AUTO=y' .config
 
-if grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF)=y$' .config; then
+if grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config; then
   echo "ERROR: a known-original-unset option is enabled:" >&2
-  grep -E '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF)=y$' .config >&2
+  grep -E '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config; then
+  echo "ERROR: an unapproved kernel compression option is enabled:" >&2
+  grep -E '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config; then
+  echo "ERROR: a disallowed module-signature option is enabled:" >&2
+  grep -E '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config >&2
+  exit 1
+fi
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config; then
+  echo "ERROR: BOOT_CONFIG was re-enabled by Kconfig normalization" >&2
+  echo "See $OUT/boot-config-state.log and config.post-olddefconfig" >&2
+  exit 1
+fi
+
+cp .config "$OUT/config.candidate"
+sha256sum "$OUT/config.candidate" | tee "$OUT/config.sha256"
+
+{
+  echo "Linux source: $(make -s kernelversion)"
+  echo "Kernel release: $(make -s kernelrelease)"
+  echo "Official loadable .ko inventory entries: $MOD_COUNT"
+  echo "Official built-in inventory entries: $BUILTIN_COUNT"
+  echo "Official built-in .paths entries: $BUILTIN_PATH_COUNT"
+  echo "Unique inferred builtin y symbols: $(wc -l < "$OUT/inferred-builtin-y.fragment")"
+  echo "localyesconfig warnings: $(wc -l < "$OUT/localyesconfig.warnings.log")"
+  echo "localmodconfig warnings: $(wc -l < "$OUT/localmodconfig.warnings.log")"
+  echo "Candidate config SHA256: $(sha256sum "$OUT/config.candidate" | awk '{print $1}')"
+  echo
+  echo "[Required project settings]"
+  grep -E '^(CONFIG_(PREEMPT_RT|HIGH_RES_TIMERS|HZ_250|HZ|KERNEL_ZSTD|LOCALVERSION|LOCALVERSION_AUTO|MODULE_SIG_ALL|MODULE_SIG_FORCE|SYSTEM_TRUSTED_KEYS|SYSTEM_REVOCATION_KEYS))=' .config || true
+  echo
+  echo "[Known original values restored]"
+  grep -E '^(CONFIG_NR_CPUS=[0-9]+|CONFIG_X86_INTERNODE_CACHE_SHIFT=[0-9]+|CONFIG_X86_INTEL_TSX_MODE_AUTO=y)$' .config || true
+  echo
+  echo "[Known original options expected unset]"
+  grep -E '^# CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF) is not set$' .config || true
+  echo
+  echo "[Review only; not changed without sufficient evidence]"
+  grep -E '^(CONFIG_(X86_INTEL_MID|HYPERV|IRQ_TIME_ACCOUNTING))=' .config || true
+  echo
+  echo "[Unresolved localyesconfig/localmodconfig warnings]"
+  cat "$OUT/localyesconfig.warnings.log" "$OUT/localmodconfig.warnings.log"
+} | tee "$OUT/audit-report.txt"
+
+# Fail on required project settings or known-value restoration regressions.
+grep -qx 'CONFIG_PREEMPT_RT=y' .config
+grep -qx 'CONFIG_HIGH_RES_TIMERS=y' .config
+grep -qx 'CONFIG_HZ_250=y' .config
+grep -qx 'CONFIG_HZ=250' .config
+grep -qx 'CONFIG_KERNEL_ZSTD=y' .config
+grep -qx 'CONFIG_LOCALVERSION="-daphile-rebuild"' .config
+grep -qx 'CONFIG_NR_CPUS=8' .config
+grep -qx 'CONFIG_X86_INTERNODE_CACHE_SHIFT=6' .config
+if grep -qx 'CONFIG_X86_VSMP=y' .config; then
+  echo "ERROR: CONFIG_X86_VSMP must be disabled" >&2
+  exit 1
+fi
+grep -qx 'CONFIG_X86_INTEL_TSX_MODE_AUTO=y' .config
+
+if grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config; then
+  echo "ERROR: a known-original-unset option is enabled:" >&2
+  grep -E '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config; then
+  echo "ERROR: an unapproved kernel compression option is enabled:" >&2
+  grep -E '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config; then
+  echo "ERROR: a disallowed module-signature option is enabled:" >&2
+  grep -E '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config >&2
+  exit 1
+fi
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config || true
+  echo
+  echo "[Unsupported optional tracing selector disabled]"
+  grep -E '^# CONFIG_BOOTTIME_TRACING is not set
+  echo
+  echo "[Review only; not changed without sufficient evidence]"
+  grep -E '^(CONFIG_(X86_INTEL_MID|HYPERV|IRQ_TIME_ACCOUNTING))=' .config || true
+  echo
+  echo "[Unresolved localyesconfig/localmodconfig warnings]"
+  cat "$OUT/localyesconfig.warnings.log" "$OUT/localmodconfig.warnings.log"
+} | tee "$OUT/audit-report.txt"
+
+# Fail on required project settings or known-value restoration regressions.
+grep -qx 'CONFIG_PREEMPT_RT=y' .config
+grep -qx 'CONFIG_HIGH_RES_TIMERS=y' .config
+grep -qx 'CONFIG_HZ_250=y' .config
+grep -qx 'CONFIG_HZ=250' .config
+grep -qx 'CONFIG_KERNEL_ZSTD=y' .config
+grep -qx 'CONFIG_LOCALVERSION="-daphile-rebuild"' .config
+grep -qx 'CONFIG_NR_CPUS=8' .config
+grep -qx 'CONFIG_X86_INTERNODE_CACHE_SHIFT=6' .config
+if grep -qx 'CONFIG_X86_VSMP=y' .config; then
+  echo "ERROR: CONFIG_X86_VSMP must be disabled" >&2
+  exit 1
+fi
+grep -qx 'CONFIG_X86_INTEL_TSX_MODE_AUTO=y' .config
+
+if grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config; then
+  echo "ERROR: a known-original-unset option or unsupported BOOT_CONFIG selector is enabled:" >&2
+  grep -E '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config; then
+  echo "ERROR: an unapproved kernel compression option is enabled:" >&2
+  grep -E '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config; then
+  echo "ERROR: a disallowed module-signature option is enabled:" >&2
+  grep -E '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config >&2
+  exit 1
+fi
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config; then
+  echo "ERROR: scripts/config --disable BOOT_CONFIG did not take effect" >&2
+  exit 1
+fi
+
+KCONFIG_WARN_UNKNOWN_SYMBOLS=1 make olddefconfig \
+  2> "$OUT/olddefconfig.stderr.log"
+make syncconfig
+
+# Record whether Kconfig normalization re-enabled any forbidden option.
+cp .config "$OUT/config.post-olddefconfig"
+{
+  echo "[BOOT_CONFIG after olddefconfig + syncconfig]"
+  grep -E '^(CONFIG_BOOT_CONFIG=|# CONFIG_BOOT_CONFIG is not set$)' .config || true
+} >> "$OUT/boot-config-state.log"
+if grep -qE '^CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING)=y
+  echo "ERROR: BOOT_CONFIG was re-enabled by Kconfig normalization" >&2
+  echo "See $OUT/boot-config-state.log and config.post-olddefconfig" >&2
+  exit 1
+fi
+
+cp .config "$OUT/config.candidate"
+sha256sum "$OUT/config.candidate" | tee "$OUT/config.sha256"
+
+{
+  echo "Linux source: $(make -s kernelversion)"
+  echo "Kernel release: $(make -s kernelrelease)"
+  echo "Official loadable .ko inventory entries: $MOD_COUNT"
+  echo "Official built-in inventory entries: $BUILTIN_COUNT"
+  echo "Official built-in .paths entries: $BUILTIN_PATH_COUNT"
+  echo "Unique inferred builtin y symbols: $(wc -l < "$OUT/inferred-builtin-y.fragment")"
+  echo "localyesconfig warnings: $(wc -l < "$OUT/localyesconfig.warnings.log")"
+  echo "localmodconfig warnings: $(wc -l < "$OUT/localmodconfig.warnings.log")"
+  echo "Candidate config SHA256: $(sha256sum "$OUT/config.candidate" | awk '{print $1}')"
+  echo
+  echo "[Required project settings]"
+  grep -E '^(CONFIG_(PREEMPT_RT|HIGH_RES_TIMERS|HZ_250|HZ|KERNEL_ZSTD|LOCALVERSION|LOCALVERSION_AUTO|MODULE_SIG_ALL|MODULE_SIG_FORCE|SYSTEM_TRUSTED_KEYS|SYSTEM_REVOCATION_KEYS))=' .config || true
+  echo
+  echo "[Known original values restored]"
+  grep -E '^(CONFIG_NR_CPUS=[0-9]+|CONFIG_X86_INTERNODE_CACHE_SHIFT=[0-9]+|CONFIG_X86_INTEL_TSX_MODE_AUTO=y)$' .config || true
+  echo
+  echo "[Known original options expected unset]"
+  grep -E '^# CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF) is not set$' .config || true
+  echo
+  echo "[Review only; not changed without sufficient evidence]"
+  grep -E '^(CONFIG_(X86_INTEL_MID|HYPERV|IRQ_TIME_ACCOUNTING))=' .config || true
+  echo
+  echo "[Unresolved localyesconfig/localmodconfig warnings]"
+  cat "$OUT/localyesconfig.warnings.log" "$OUT/localmodconfig.warnings.log"
+} | tee "$OUT/audit-report.txt"
+
+# Fail on required project settings or known-value restoration regressions.
+grep -qx 'CONFIG_PREEMPT_RT=y' .config
+grep -qx 'CONFIG_HIGH_RES_TIMERS=y' .config
+grep -qx 'CONFIG_HZ_250=y' .config
+grep -qx 'CONFIG_HZ=250' .config
+grep -qx 'CONFIG_KERNEL_ZSTD=y' .config
+grep -qx 'CONFIG_LOCALVERSION="-daphile-rebuild"' .config
+grep -qx 'CONFIG_NR_CPUS=8' .config
+grep -qx 'CONFIG_X86_INTERNODE_CACHE_SHIFT=6' .config
+if grep -qx 'CONFIG_X86_VSMP=y' .config; then
+  echo "ERROR: CONFIG_X86_VSMP must be disabled" >&2
+  exit 1
+fi
+grep -qx 'CONFIG_X86_INTEL_TSX_MODE_AUTO=y' .config
+
+if grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config; then
+  echo "ERROR: a known-original-unset option is enabled:" >&2
+  grep -E '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config; then
+  echo "ERROR: an unapproved kernel compression option is enabled:" >&2
+  grep -E '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config; then
+  echo "ERROR: a disallowed module-signature option is enabled:" >&2
+  grep -E '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config >&2
+  exit 1
+fi
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config; then
+  echo "ERROR: BOOT_CONFIG was re-enabled by Kconfig normalization" >&2
+  echo "See $OUT/boot-config-state.log and config.post-olddefconfig" >&2
+  exit 1
+fi
+
+cp .config "$OUT/config.candidate"
+sha256sum "$OUT/config.candidate" | tee "$OUT/config.sha256"
+
+{
+  echo "Linux source: $(make -s kernelversion)"
+  echo "Kernel release: $(make -s kernelrelease)"
+  echo "Official loadable .ko inventory entries: $MOD_COUNT"
+  echo "Official built-in inventory entries: $BUILTIN_COUNT"
+  echo "Official built-in .paths entries: $BUILTIN_PATH_COUNT"
+  echo "Unique inferred builtin y symbols: $(wc -l < "$OUT/inferred-builtin-y.fragment")"
+  echo "localyesconfig warnings: $(wc -l < "$OUT/localyesconfig.warnings.log")"
+  echo "localmodconfig warnings: $(wc -l < "$OUT/localmodconfig.warnings.log")"
+  echo "Candidate config SHA256: $(sha256sum "$OUT/config.candidate" | awk '{print $1}')"
+  echo
+  echo "[Required project settings]"
+  grep -E '^(CONFIG_(PREEMPT_RT|HIGH_RES_TIMERS|HZ_250|HZ|KERNEL_ZSTD|LOCALVERSION|LOCALVERSION_AUTO|MODULE_SIG_ALL|MODULE_SIG_FORCE|SYSTEM_TRUSTED_KEYS|SYSTEM_REVOCATION_KEYS))=' .config || true
+  echo
+  echo "[Known original values restored]"
+  grep -E '^(CONFIG_NR_CPUS=[0-9]+|CONFIG_X86_INTERNODE_CACHE_SHIFT=[0-9]+|CONFIG_X86_INTEL_TSX_MODE_AUTO=y)$' .config || true
+  echo
+  echo "[Known original options expected unset]"
+  grep -E '^# CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF) is not set$' .config || true
+  echo
+  echo "[Review only; not changed without sufficient evidence]"
+  grep -E '^(CONFIG_(X86_INTEL_MID|HYPERV|IRQ_TIME_ACCOUNTING))=' .config || true
+  echo
+  echo "[Unresolved localyesconfig/localmodconfig warnings]"
+  cat "$OUT/localyesconfig.warnings.log" "$OUT/localmodconfig.warnings.log"
+} | tee "$OUT/audit-report.txt"
+
+# Fail on required project settings or known-value restoration regressions.
+grep -qx 'CONFIG_PREEMPT_RT=y' .config
+grep -qx 'CONFIG_HIGH_RES_TIMERS=y' .config
+grep -qx 'CONFIG_HZ_250=y' .config
+grep -qx 'CONFIG_HZ=250' .config
+grep -qx 'CONFIG_KERNEL_ZSTD=y' .config
+grep -qx 'CONFIG_LOCALVERSION="-daphile-rebuild"' .config
+grep -qx 'CONFIG_NR_CPUS=8' .config
+grep -qx 'CONFIG_X86_INTERNODE_CACHE_SHIFT=6' .config
+if grep -qx 'CONFIG_X86_VSMP=y' .config; then
+  echo "ERROR: CONFIG_X86_VSMP must be disabled" >&2
+  exit 1
+fi
+grep -qx 'CONFIG_X86_INTEL_TSX_MODE_AUTO=y' .config
+
+if grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config; then
+  echo "ERROR: a known-original-unset option is enabled:" >&2
+  grep -E '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config; then
+  echo "ERROR: an unapproved kernel compression option is enabled:" >&2
+  grep -E '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config; then
+  echo "ERROR: a disallowed module-signature option is enabled:" >&2
+  grep -E '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config >&2
+  exit 1
+fi
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config || true
+  echo
+  echo "[Review only; not changed without sufficient evidence]"
+  grep -E '^(CONFIG_(X86_INTEL_MID|HYPERV|IRQ_TIME_ACCOUNTING))=' .config || true
+  echo
+  echo "[Unresolved localyesconfig/localmodconfig warnings]"
+  cat "$OUT/localyesconfig.warnings.log" "$OUT/localmodconfig.warnings.log"
+} | tee "$OUT/audit-report.txt"
+
+# Fail on required project settings or known-value restoration regressions.
+grep -qx 'CONFIG_PREEMPT_RT=y' .config
+grep -qx 'CONFIG_HIGH_RES_TIMERS=y' .config
+grep -qx 'CONFIG_HZ_250=y' .config
+grep -qx 'CONFIG_HZ=250' .config
+grep -qx 'CONFIG_KERNEL_ZSTD=y' .config
+grep -qx 'CONFIG_LOCALVERSION="-daphile-rebuild"' .config
+grep -qx 'CONFIG_NR_CPUS=8' .config
+grep -qx 'CONFIG_X86_INTERNODE_CACHE_SHIFT=6' .config
+if grep -qx 'CONFIG_X86_VSMP=y' .config; then
+  echo "ERROR: CONFIG_X86_VSMP must be disabled" >&2
+  exit 1
+fi
+grep -qx 'CONFIG_X86_INTEL_TSX_MODE_AUTO=y' .config
+
+if grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config; then
+  echo "ERROR: a known-original-unset option or unsupported BOOT_CONFIG selector is enabled:" >&2
+  grep -E '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config; then
+  echo "ERROR: an unapproved kernel compression option is enabled:" >&2
+  grep -E '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config; then
+  echo "ERROR: a disallowed module-signature option is enabled:" >&2
+  grep -E '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config >&2
+  exit 1
+fi
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config; then
+  echo "ERROR: scripts/config --disable BOOT_CONFIG did not take effect" >&2
+  exit 1
+fi
+
+KCONFIG_WARN_UNKNOWN_SYMBOLS=1 make olddefconfig \
+  2> "$OUT/olddefconfig.stderr.log"
+make syncconfig
+
+# Record whether Kconfig normalization re-enabled any forbidden option.
+cp .config "$OUT/config.post-olddefconfig"
+{
+  echo "[BOOT_CONFIG after olddefconfig + syncconfig]"
+  grep -E '^(CONFIG_BOOT_CONFIG=|# CONFIG_BOOT_CONFIG is not set$)' .config || true
+} >> "$OUT/boot-config-state.log"
+if grep -qE '^CONFIG_(BOOT_CONFIG|BOOTTIME_TRACING)=y
+  echo "ERROR: BOOT_CONFIG was re-enabled by Kconfig normalization" >&2
+  echo "See $OUT/boot-config-state.log and config.post-olddefconfig" >&2
+  exit 1
+fi
+
+cp .config "$OUT/config.candidate"
+sha256sum "$OUT/config.candidate" | tee "$OUT/config.sha256"
+
+{
+  echo "Linux source: $(make -s kernelversion)"
+  echo "Kernel release: $(make -s kernelrelease)"
+  echo "Official loadable .ko inventory entries: $MOD_COUNT"
+  echo "Official built-in inventory entries: $BUILTIN_COUNT"
+  echo "Official built-in .paths entries: $BUILTIN_PATH_COUNT"
+  echo "Unique inferred builtin y symbols: $(wc -l < "$OUT/inferred-builtin-y.fragment")"
+  echo "localyesconfig warnings: $(wc -l < "$OUT/localyesconfig.warnings.log")"
+  echo "localmodconfig warnings: $(wc -l < "$OUT/localmodconfig.warnings.log")"
+  echo "Candidate config SHA256: $(sha256sum "$OUT/config.candidate" | awk '{print $1}')"
+  echo
+  echo "[Required project settings]"
+  grep -E '^(CONFIG_(PREEMPT_RT|HIGH_RES_TIMERS|HZ_250|HZ|KERNEL_ZSTD|LOCALVERSION|LOCALVERSION_AUTO|MODULE_SIG_ALL|MODULE_SIG_FORCE|SYSTEM_TRUSTED_KEYS|SYSTEM_REVOCATION_KEYS))=' .config || true
+  echo
+  echo "[Known original values restored]"
+  grep -E '^(CONFIG_NR_CPUS=[0-9]+|CONFIG_X86_INTERNODE_CACHE_SHIFT=[0-9]+|CONFIG_X86_INTEL_TSX_MODE_AUTO=y)$' .config || true
+  echo
+  echo "[Known original options expected unset]"
+  grep -E '^# CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF) is not set$' .config || true
+  echo
+  echo "[Review only; not changed without sufficient evidence]"
+  grep -E '^(CONFIG_(X86_INTEL_MID|HYPERV|IRQ_TIME_ACCOUNTING))=' .config || true
+  echo
+  echo "[Unresolved localyesconfig/localmodconfig warnings]"
+  cat "$OUT/localyesconfig.warnings.log" "$OUT/localmodconfig.warnings.log"
+} | tee "$OUT/audit-report.txt"
+
+# Fail on required project settings or known-value restoration regressions.
+grep -qx 'CONFIG_PREEMPT_RT=y' .config
+grep -qx 'CONFIG_HIGH_RES_TIMERS=y' .config
+grep -qx 'CONFIG_HZ_250=y' .config
+grep -qx 'CONFIG_HZ=250' .config
+grep -qx 'CONFIG_KERNEL_ZSTD=y' .config
+grep -qx 'CONFIG_LOCALVERSION="-daphile-rebuild"' .config
+grep -qx 'CONFIG_NR_CPUS=8' .config
+grep -qx 'CONFIG_X86_INTERNODE_CACHE_SHIFT=6' .config
+if grep -qx 'CONFIG_X86_VSMP=y' .config; then
+  echo "ERROR: CONFIG_X86_VSMP must be disabled" >&2
+  exit 1
+fi
+grep -qx 'CONFIG_X86_INTEL_TSX_MODE_AUTO=y' .config
+
+if grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config; then
+  echo "ERROR: a known-original-unset option is enabled:" >&2
+  grep -E '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config; then
+  echo "ERROR: an unapproved kernel compression option is enabled:" >&2
+  grep -E '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config >&2
+  exit 1
+fi
+if grep -qE '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config; then
+  echo "ERROR: a disallowed module-signature option is enabled:" >&2
+  grep -E '^CONFIG_MODULE_SIG_(ALL|FORCE)=y$|^CONFIG_IMA_APPRAISE_MODSIG=y$' .config >&2
+  exit 1
+fi
+
+echo "CONFIG AUDIT CANDIDATE GENERATED (NO KERNEL COMPILE PERFORMED)"
+echo "Output directory: $OUT"
+ .config; then
+  echo "ERROR: BOOT_CONFIG was re-enabled by Kconfig normalization" >&2
+  echo "See $OUT/boot-config-state.log and config.post-olddefconfig" >&2
+  exit 1
+fi
+
+cp .config "$OUT/config.candidate"
+sha256sum "$OUT/config.candidate" | tee "$OUT/config.sha256"
+
+{
+  echo "Linux source: $(make -s kernelversion)"
+  echo "Kernel release: $(make -s kernelrelease)"
+  echo "Official loadable .ko inventory entries: $MOD_COUNT"
+  echo "Official built-in inventory entries: $BUILTIN_COUNT"
+  echo "Official built-in .paths entries: $BUILTIN_PATH_COUNT"
+  echo "Unique inferred builtin y symbols: $(wc -l < "$OUT/inferred-builtin-y.fragment")"
+  echo "localyesconfig warnings: $(wc -l < "$OUT/localyesconfig.warnings.log")"
+  echo "localmodconfig warnings: $(wc -l < "$OUT/localmodconfig.warnings.log")"
+  echo "Candidate config SHA256: $(sha256sum "$OUT/config.candidate" | awk '{print $1}')"
+  echo
+  echo "[Required project settings]"
+  grep -E '^(CONFIG_(PREEMPT_RT|HIGH_RES_TIMERS|HZ_250|HZ|KERNEL_ZSTD|LOCALVERSION|LOCALVERSION_AUTO|MODULE_SIG_ALL|MODULE_SIG_FORCE|SYSTEM_TRUSTED_KEYS|SYSTEM_REVOCATION_KEYS))=' .config || true
+  echo
+  echo "[Known original values restored]"
+  grep -E '^(CONFIG_NR_CPUS=[0-9]+|CONFIG_X86_INTERNODE_CACHE_SHIFT=[0-9]+|CONFIG_X86_INTEL_TSX_MODE_AUTO=y)$' .config || true
+  echo
+  echo "[Known original options expected unset]"
+  grep -E '^# CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF) is not set$' .config || true
+  echo
+  echo "[Review only; not changed without sufficient evidence]"
+  grep -E '^(CONFIG_(X86_INTEL_MID|HYPERV|IRQ_TIME_ACCOUNTING))=' .config || true
+  echo
+  echo "[Unresolved localyesconfig/localmodconfig warnings]"
+  cat "$OUT/localyesconfig.warnings.log" "$OUT/localmodconfig.warnings.log"
+} | tee "$OUT/audit-report.txt"
+
+# Fail on required project settings or known-value restoration regressions.
+grep -qx 'CONFIG_PREEMPT_RT=y' .config
+grep -qx 'CONFIG_HIGH_RES_TIMERS=y' .config
+grep -qx 'CONFIG_HZ_250=y' .config
+grep -qx 'CONFIG_HZ=250' .config
+grep -qx 'CONFIG_KERNEL_ZSTD=y' .config
+grep -qx 'CONFIG_LOCALVERSION="-daphile-rebuild"' .config
+grep -qx 'CONFIG_NR_CPUS=8' .config
+grep -qx 'CONFIG_X86_INTERNODE_CACHE_SHIFT=6' .config
+if grep -qx 'CONFIG_X86_VSMP=y' .config; then
+  echo "ERROR: CONFIG_X86_VSMP must be disabled" >&2
+  exit 1
+fi
+grep -qx 'CONFIG_X86_INTEL_TSX_MODE_AUTO=y' .config
+
+if grep -qE '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config; then
+  echo "ERROR: a known-original-unset option is enabled:" >&2
+  grep -E '^CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF|BOOTTIME_TRACING)=y$' .config >&2
   exit 1
 fi
 if grep -qE '^CONFIG_(KERNEL_GZIP|KERNEL_BZIP2|KERNEL_LZMA|KERNEL_XZ|KERNEL_LZO|KERNEL_LZ4|KERNEL_UNCOMPRESSED)=y$' .config; then
