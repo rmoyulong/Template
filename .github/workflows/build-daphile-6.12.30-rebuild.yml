@@ -995,7 +995,7 @@ jobs:
 
           name: Daphile 6.12.30 PREEMPT_RT Rebuild
 
-          commit: ${{ github.sha }}
+          commit: master
 
           allowUpdates: true
           replacesArtifacts: true
