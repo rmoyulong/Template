@@ -277,6 +277,30 @@ jobs:
           echo "Audit report: $GITHUB_WORKSPACE/config-audit-report.txt"
           echo "No independent localmodconfig reconstruction is performed in this build workflow."
 
+      # Always preserve reconstruction output, including when the SHA lock fails.
+      # This allows an exact config diff without weakening the reviewed SHA check.
+      - name: Upload config reconstruction diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daphile-config-reconstruction-diagnostics
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            config-audit/config.candidate
+            config-audit/config.sha256
+            config-audit/audit-report.txt
+            config-audit/config.allmodconfig
+            config-audit/config.builtin-probe
+            config-audit/config.localmodconfig
+            config-audit/inferred-builtin-y.fragment
+            config-audit/config.pre-olddefconfig
+            config-audit/config.post-olddefconfig
+            config-audit/boot-config-state.log
+            config-audit/*.warnings.log
+            config-audit/*.stderr.log
+            linux-6.12.30/.config
+
       # --------------------------------------------------
       # 6. Build kernel
       # --------------------------------------------------
