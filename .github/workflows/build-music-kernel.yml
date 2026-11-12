@@ -128,6 +128,12 @@ jobs:
           cd "linux-${KERNEL_VERSION}"
           MIGRATION_DIR="$GITHUB_WORKSPACE/kernel_config_migration_7.3.x"
           cp "$MIGRATION_DIR/config-7.3.x-rt-mod-daphile-final.conf" .config
+ 
+          #禁用证书相关选项，避免构建时报签名错误
+          scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
+          scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
+          scripts/config --disable MODULE_SIG_ALL
+          scripts/config --disable MODULE_SIG_FORCE
           
           # Apply confirmed Daphile configuration.
           
