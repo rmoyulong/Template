@@ -114,8 +114,8 @@ jobs:
           make olddefconfig
           make syncconfig
 
-          # Prove that the diagnostic config differs from the reviewed baseline
-          # in exactly three intended symbols: CMDLINE, FTRACE_STARTUP_TEST, and LOCALVERSION.
+          # Prove that only the requested startup-test option and its Kconfig-dependent
+          # selftest helpers change, in addition to diagnostic CMDLINE/LOCALVERSION.
           python3 - "$GITHUB_WORKSPACE/config-baseline-reviewed" .config <<'PY'
           import sys
           def read_config(path):
@@ -133,7 +133,14 @@ jobs:
           before = read_config(sys.argv[1])
           after = read_config(sys.argv[2])
           changed = sorted(k for k in set(before) | set(after) if before.get(k, "n") != after.get(k, "n"))
-          expected = ["CONFIG_CMDLINE", "CONFIG_FTRACE_STARTUP_TEST", "CONFIG_LOCALVERSION"]
+          expected = [
+              "CONFIG_CMDLINE",
+              "CONFIG_EVENT_TRACE_STARTUP_TEST",
+              "CONFIG_EVENT_TRACE_TEST_SYSCALLS",
+              "CONFIG_FTRACE_SELFTEST",
+              "CONFIG_FTRACE_STARTUP_TEST",
+              "CONFIG_LOCALVERSION",
+          ]
           print("Changed Kconfig symbols:", changed)
           if changed != expected:
               print("ERROR: diagnostic build changed unexpected Kconfig symbols", file=sys.stderr)
@@ -174,7 +181,9 @@ jobs:
             exit 1
           fi
           grep -qx '# CONFIG_FTRACE_STARTUP_TEST is not set' .config
-          require_config CONFIG_FTRACE_SELFTEST y
+          grep -qx '# CONFIG_FTRACE_SELFTEST is not set' .config
+          grep -qx '# CONFIG_EVENT_TRACE_STARTUP_TEST is not set' .config
+          grep -qx '# CONFIG_EVENT_TRACE_TEST_SYSCALLS is not set' .config
           require_config CONFIG_FUNCTION_TRACER y
           require_config CONFIG_FUNCTION_GRAPH_TRACER y
           require_config CONFIG_DYNAMIC_FTRACE y
