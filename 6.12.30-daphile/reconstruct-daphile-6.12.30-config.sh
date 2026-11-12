@@ -191,6 +191,7 @@ sha256sum "$OUT/config.candidate" | tee "$OUT/config.sha256"
   echo "intel_atomisp2_pm -> CONFIG_INTEL_ATOMISP2_PM (explicit module setting; INTEL_ATOMISP disabled)"
   echo "video_common -> CONFIG_VIDEO=y is present; exact module-name mapping remains unverified"
   echo
+  echo "[Known original options expected unset]"
   grep -E '^# CONFIG_(MAXSMP|ACPI_REDUCED_HARDWARE_ONLY|BOOT_CONFIG|BOOT_CONFIG_EMBED|BOOT_CONFIG_FORCE|X86_INTEL_TSX_MODE_OFF) is not set$' .config || true
   echo
   echo "[Unsupported optional tracing selector disabled]"
