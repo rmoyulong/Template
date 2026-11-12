@@ -135,6 +135,9 @@ jobs:
           wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc
           grep -F linux-6.12.30.tar.xz sha256sums.asc | sha256sum -c -
 
+          echo "===== EXTRACT VERIFIED LINUX SOURCE ====="
+          tar -xJf linux-6.12.30.tar.xz
+
           test -f linux-6.12.30/Makefile
 
           cd linux-6.12.30
