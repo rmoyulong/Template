@@ -118,7 +118,7 @@ jobs:
               values = {}
               with open(path, encoding="utf-8") as f:
                   for line in f:
-                      line = line.rstrip("\\n")
+                      line = line.rstrip()
                       if line.startswith("CONFIG_") and "=" in line:
                           key, value = line.split("=", 1)
                           values[key] = value
