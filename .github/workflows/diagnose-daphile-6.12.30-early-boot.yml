@@ -145,7 +145,7 @@ jobs:
             if [[ "$actual" != "$symbol=$expected" ]]; then
               echo "::error::Configuration mismatch: $symbol"
               echo "Expected: $symbol=$expected"
-              echo "Actual: \${actual:-not set}"
+              echo "Actual: ${actual:-not set}"
               exit 1
             fi
           }
