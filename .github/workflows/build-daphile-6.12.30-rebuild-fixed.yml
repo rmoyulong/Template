@@ -1,4 +1,4 @@
-name: Build Daphile 6.12.30 PREEMPT_RT Rebuild
+name: Build Daphile 6.12.30 PREEMPT_RT Rebuild Fixed
 
 on:
   workflow_dispatch:
