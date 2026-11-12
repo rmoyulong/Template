@@ -558,6 +558,23 @@ jobs:
             "$GITHUB_WORKSPACE/built-builtin.paths" \
             > "$GITHUB_WORKSPACE/builtin-extra-in-build.txt"
 
+          # Release assets cannot be zero bytes. Preserve an explicit,
+          # machine-readable comment when a difference list is empty.
+          for report in \
+            modules-missing-from-build.txt \
+            modules-extra-in-build.txt \
+            builtin-missing-from-build.txt \
+            builtin-extra-in-build.txt; do
+            report_path="$GITHUB_WORKSPACE/$report"
+            if [[ ! -s "$report_path" ]]; then
+              printf '# None: no differences found.\n' > "$report_path"
+            fi
+          done
+
+          count_entries() {
+            awk '!/^#/ { count++ } END { print count + 0 }' "$1"
+          }
+
           # Generate comparison report.
 
           {
@@ -568,13 +585,13 @@ jobs:
             echo
             echo "Official modules: $(wc -l < "$GITHUB_WORKSPACE/official-modules.names")"
             echo "Built modules: $(wc -l < "$GITHUB_WORKSPACE/built-modules.names")"
-            echo "Missing modules: $(wc -l < "$GITHUB_WORKSPACE/modules-missing-from-build.txt")"
-            echo "Extra modules: $(wc -l < "$GITHUB_WORKSPACE/modules-extra-in-build.txt")"
+            echo "Missing modules: $(count_entries "$GITHUB_WORKSPACE/modules-missing-from-build.txt")"
+            echo "Extra modules: $(count_entries "$GITHUB_WORKSPACE/modules-extra-in-build.txt")"
             echo
             echo "Official builtins: $(wc -l < "$GITHUB_WORKSPACE/official-builtin.paths.sorted")"
             echo "Built builtins: $(wc -l < "$GITHUB_WORKSPACE/built-builtin.paths")"
-            echo "Missing builtins: $(wc -l < "$GITHUB_WORKSPACE/builtin-missing-from-build.txt")"
-            echo "Extra builtins: $(wc -l < "$GITHUB_WORKSPACE/builtin-extra-in-build.txt")"
+            echo "Missing builtins: $(count_entries "$GITHUB_WORKSPACE/builtin-missing-from-build.txt")"
+            echo "Extra builtins: $(count_entries "$GITHUB_WORKSPACE/builtin-extra-in-build.txt")"
           } | tee "$GITHUB_WORKSPACE/inventory-comparison.txt"
 
           echo
