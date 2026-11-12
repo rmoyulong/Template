@@ -32,14 +32,35 @@ jobs:
           tar -xJf linux-6.12.30.tar.xz
           test "$(make -s -C linux-6.12.30 kernelversion)" = "6.12.30"
       - name: Generate candidate and audit (no compilation)
+        env:
+          AUDIT_OUT: ${{ github.workspace }}/daphile-config-audit
         run: |
           set -euo pipefail
-          cd linux-6.12.30
+          echo "GitHub workspace: $GITHUB_WORKSPACE"
+          echo "Audit output: $AUDIT_OUT"
+          cd "$GITHUB_WORKSPACE/linux-6.12.30"
           bash ../6.12.30-daphile/reconstruct-daphile-6.12.30-config.sh
+          echo "===== AUDIT OUTPUT FILES ====="
+          find "$AUDIT_OUT" -maxdepth 2 -type f -printf '%p (%s bytes)\\n' | sort
+          test -s "$AUDIT_OUT/config.candidate"
+          test -s "$AUDIT_OUT/config.sha256"
+          test -s "$AUDIT_OUT/audit-report.txt"
+      - name: Diagnose audit output directory
+        if: always()
+        run: |
+          set +e
+          echo "GitHub workspace: $GITHUB_WORKSPACE"
+          echo "===== EXPECTED OUTPUT ====="
+          ls -la "$GITHUB_WORKSPACE/daphile-config-audit"
+          echo "===== SEARCH FOR AUDIT FILES ====="
+          find "$GITHUB_WORKSPACE" -maxdepth 5 -type f \\( -name 'config.candidate' -o -name 'audit-report.txt' -o -name 'config.sha256' \\) -print
+          echo "===== DIRECTORY TREE ====="
+          find "$GITHUB_WORKSPACE" -maxdepth 3 -type d -name '*audit*' -print
       - name: Upload config audit report
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: daphile-6.12.30-config-audit
-          path: linux-6.12.30/daphile-config-audit/
-          if-no-files-found: error
+          path: ${{ github.workspace }}/daphile-config-audit/
+          if-no-files-found: warn
           retention-days: 30
