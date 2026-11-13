@@ -154,9 +154,13 @@ jobs:
               "CONFIG_FTRACE_",
               "CONFIG_EVENT_TRACE_",
               "CONFIG_KGDB",
+              "CONFIG_KDB_",
               "CONFIG_KCSAN",
           )
           allowed_exact = {
+              # Hidden Kconfig symbols whose visibility/value depends on KGDB.
+              "CONFIG_ARCH_HAS_EARLY_DEBUG",
+              "CONFIG_DEBUG_KERNEL_DC",
               "CONFIG_CONSOLE_POLL",
               "CONFIG_DEBUG_INFO",
               "CONFIG_DEBUG_INFO_NONE",
@@ -181,6 +185,11 @@ jobs:
               "CONFIG_KGDB_TESTS",
               "CONFIG_KGDB_TESTS_ON_BOOT",
               "CONFIG_KGDB_LOW_LEVEL_TRAP",
+              "CONFIG_KDB_CONTINUE_CATASTROPHIC",
+              "CONFIG_KDB_DEFAULT_ENABLE",
+              "CONFIG_KDB_KEYBOARD",
+              "CONFIG_ARCH_HAS_EARLY_DEBUG",
+              "CONFIG_DEBUG_KERNEL_DC",
               "CONFIG_KCSAN",
               "CONFIG_KCSAN_SELFTEST",
               "CONFIG_KCSAN_EARLY_ENABLE",
@@ -193,7 +202,7 @@ jobs:
 
           # No KGDB/KCSAN option may remain enabled, including hidden helpers.
           for symbol, value in after.items():
-              if (symbol.startswith("CONFIG_KGDB") or symbol.startswith("CONFIG_KCSAN")) and value != "n":
+              if (symbol.startswith(("CONFIG_KGDB", "CONFIG_KDB_", "CONFIG_KCSAN")) and value != "n"):
                   print(f"ERROR: {symbol} unexpectedly remains enabled: {value}", file=sys.stderr)
                   sys.exit(1)
           PY
