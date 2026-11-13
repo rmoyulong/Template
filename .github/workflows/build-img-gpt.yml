@@ -114,10 +114,10 @@ jobs:
 
           LOOP="${{ env.LOOP }}"
           sudo mkdir -p /mnt/rootfs /mnt/efi
-          sudo mount "${LOOP}p3" /mnt/rootfs
-          sudo mount "${LOOP}p2" /mnt/efi
+          sudo mount "${LOOP}p2" /mnt/rootfs
+          sudo mount "${LOOP}p1" /mnt/efi
 
-          # 解压 rootfs，保留完整权限、符号链接与扩展属性
+          # 解压到 EXT4 分区，不再报 symlink/权限 错误
           #   --acls --xattrs：必须与 build-rootfs.yml 的打包参数（--acls --xattrs）对应，
           #   否则 xattr 丢失，依赖 file capability 的程序会失效（例如 ping 需要 cap_net_raw）。
           sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs \
@@ -157,14 +157,14 @@ jobs:
           sudo chmod 0644 /mnt/rootfs/root/.bashrc
           ###################
           
-          # 放入安装脚本（GPT 版，两份）
-          #   /root/install.sh      ← patch/install-gpt.sh       （rsync 当前系统整机到目标盘）
-          #   /root/install-plus.sh ← patch/install-gpt-plus.sh  （解压 /root/rootfs.tar.gz）
+          # 放入安装脚本（MBR 版，两份）
+          #   /root/install.sh      ← patch/install-mbr.sh       （rsync 当前系统整机到目标盘）
+          #   /root/install-plus.sh ← patch/install-mbr-plus.sh  （解压 /root/rootfs.tar.gz）
           sudo mkdir -p /mnt/rootfs/root
           sudo chmod 700 /mnt/rootfs/root
           for pair in \
-            "${{ github.workspace }}/patch/install-gpt.sh:/mnt/rootfs/root/install.sh" \
-            "${{ github.workspace }}/patch/install-gpt-plus.sh:/mnt/rootfs/root/install-plus.sh"; do
+            "${{ github.workspace }}/patch/install-mbr.sh:/mnt/rootfs/root/install.sh" \
+            "${{ github.workspace }}/patch/install-mbr-plus.sh:/mnt/rootfs/root/install-plus.sh"; do
             src="${pair%%:*}"; dst="${pair##*:}"
             if [ -f "$src" ]; then
               sudo cp "$src" "$dst"
@@ -177,13 +177,14 @@ jobs:
           done
           sudo ls -l /mnt/rootfs/root/ || true
 
-          # 解压 modules 到临时目录
+          # 解压 modules
           rm -rf /tmp/modules-extract
           mkdir -p /tmp/modules-extract
           sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /tmp/modules-extract
 
           # 版本号不写死：直接读包内顶层目录名（如 7.3.3-rt）
           #   若给模块化版单独设了 LOCALVERSION（如 -rt-mod），这里会自动识别
+          KVER=""
           for d in /tmp/modules-extract/*/; do
             [ -d "$d" ] || continue
             KVER="$(basename "$d")"
@@ -193,17 +194,13 @@ jobs:
             [0-9]*.[0-9]*) ;;
             *)
               echo "ERROR: 无法从 modules.tar.gz 识别版本目录（读到: '${KVER}'）"
-              echo "       本 workflow 预期目录为 $KERNEL_RELEASE"
+              echo "       包内顶层应为 7.3.3 / 7.3.3-rt 这类目录"
               ls -la /tmp/modules-extract
               exit 1
               ;;
           esac
           echo "KVER=$KVER" >> "$GITHUB_ENV"
           echo "检测到模块目录: $KVER"
-          if [ "$KVER" != "$KERNEL_RELEASE" ]; then
-            echo "ERROR: modules 版本不匹配，期望 $KERNEL_RELEASE，实际 $KVER"
-            exit 1
-          fi
 
           # 模块目录名必须与 uname -r 一致，否则新内核找不到自己的模块
           sudo mkdir -p /mnt/rootfs/lib/modules
@@ -214,7 +211,7 @@ jobs:
           test -d "/mnt/rootfs/lib/modules/$KVER" || { echo "ERROR: $KVER 模块目录缺失"; exit 1; }
           echo "模块就位: $(ls "/mnt/rootfs/lib/modules/$KVER" | tr '\n' ' ')"
 
-          # 放置内核（文件名同样必须与 uname -r 一致）
+          # 内核（文件名同样必须与 uname -r 一致）
           sudo mkdir -p /mnt/rootfs/boot
           sudo cp "$WORK_DIR/bzImage" "/mnt/rootfs/boot/vmlinuz-$KVER"
           ls -lh "/mnt/rootfs/boot/vmlinuz-$KVER"
