@@ -131,9 +131,17 @@ jobs:
         run: |
           cd "linux-${KERNEL_VERSION}"
           MIGRATION_DIR="$GITHUB_WORKSPACE/${KERNEL_PATH}"
-          cp "$MIGRATION_DIR/${KERNEL_CONFIG}" .config
+          cp "$MIGRATION_DIR/${KERNEL_CONFIG}" FRAGMENT.config
  
-          #禁用证书相关选项，避免构建时报签名错误
+          # 1) 从官方 x86_64 默认配置起步（约 1700 个 =y/=m 条目，完整可启动）
+          make x86_64_defconfig
+          COUNT0=$(grep -c '^CONFIG_[A-Za-z0-9_]\+=' .config)
+          echo "defconfig 条目数: $COUNT0"
+          
+          # 2) 合并我们的增量配置片段（只写需要修改/额外开启的选项）
+          ./scripts/kconfig/merge_config.sh -m -O . .config FRAGMENT.config
+          
+          # 3) 禁用证书相关选项，避免构建时报签名错误
           ./scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
           ./scripts/config --set-str SYSTEM_REVOCATION_KEYS ""
           ./scripts/config --disable MODULE_SIG
@@ -195,6 +203,20 @@ jobs:
           echo "===== KCONFIG OLDDEFCONFIG ====="
           
           make olddefconfig
+          
+          # 4) 最后一次依赖补齐，并让 kconfig 报告写错的符号名
+          KCONFIG_WARN_UNKNOWN_SYMBOLS=1 make olddefconfig
+          
+          # ---- 压缩算法断言：必须 zstd ----
+          # KERNEL_GZIP / KERNEL_ZSTD 是同一 choice 组的成员。若片段里的
+          # "# CONFIG_KERNEL_GZIP is not set" 没生效，olddefconfig 会退回默认
+          # 的 gzip，肉眼看不出、但启动解压就慢了。这里直接断言拦下。
+          if grep -qE '^CONFIG_KERNEL_ZSTD=y$' .config; then
+            echo "[OK] 内核压缩算法: CONFIG_KERNEL_ZSTD=y（解压最快）"
+          else
+            echo "::error::内核压缩算法未生效：期望 CONFIG_KERNEL_ZSTD=y，当前生效的是 $(grep -E '^CONFIG_KERNEL_(GZIP|ZSTD|XZ|LZ4|LZO|BZIP2|LZMA)=y$' .config | tr '\n' ' ')" >&2
+            exit 1
+          fi
 
       - name: 仅构建配置
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_modules == false }}
