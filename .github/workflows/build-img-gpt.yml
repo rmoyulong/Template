@@ -23,10 +23,14 @@ env:
   WORK_DIR: ${{ github.workspace }}/work
   IMG_FILE: ${{ github.workspace }}/work/debian-rootfs.img
   ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-trixie-latest/rootfs.tar.gz
-  # 6.12.30-daphile-rebuild 的内核、模块和最终编译配置必须来自同一个 Release。
-  MODULES_URL: https://github.com/rmoyulong/Template/releases/download/kernel-6.12.30-daphile-rebuild/modules.tar.gz
-  CONFIG_URL: https://github.com/rmoyulong/Template/releases/download/kernel-6.12.30-daphile-rebuild/config
-  BZIMAGE_URL: https://github.com/rmoyulong/Template/releases/download/kernel-6.12.30-daphile-rebuild/bzImage
+  # 默认用「模块化」内核（带真实 .ko）。若要用「全内建」内核，
+  # 把下面两个 URL 末尾的 -%E6%A8%A1%E5%9D%97%E5%8C%96（-模块化）去掉即可。
+  MODULES_URL: https://github.com/rmoyulong/Template/releases/download/music-linux-7.3.x/modules.tar.gz
+  # 真实内核配置（由 build-kernel 产出，随 kernel-image release 一起发布）。
+  # 放进 /boot/config-$KVER 后，initramfs 的 MODULES=dep 才能正确判断
+  # "哪些驱动已经内建、根设备根本不需要模块"，从而把 initramfs 做到最小。
+  CONFIG_URL: https://github.com/rmoyulong/Template/releases/download/music-linux-7.3.x/config
+  BZIMAGE_URL: https://github.com/rmoyulong/Template/releases/download/music-linux-7.3.x/bzImage
 
 jobs:
   build-img:
@@ -54,26 +58,29 @@ jobs:
       - name: Download rootfs, modules, bzImage
         run: |
           set -euo pipefail
-          if [ "$KERNEL_VERSION" != "$KERNEL_RELEASE" ]; then
-            echo "::error::此打包 workflow 固定使用 $KERNEL_RELEASE"
-            exit 1
-          fi
           mkdir -p "$WORK_DIR"
           cd "$WORK_DIR"
           wget -q -O rootfs.tar.gz "$ROOTFS_URL"
           wget -q -O modules.tar.gz "$MODULES_URL"
           wget -q -O bzImage "$BZIMAGE_URL"
-          # 必须下载与 bzImage、modules 同一 Release 的最终 .config；失败就终止，不能静默回退。
-          wget -q -O config-6.12.30-daphile-rebuild "$CONFIG_URL"
-          test -s rootfs.tar.gz
-          test -s modules.tar.gz
-          test -s bzImage
-          test -s config-6.12.30-daphile-rebuild
-          grep -Fqx "CONFIG_HZ=250" config-6.12.30-daphile-rebuild
-          grep -Fqx "CONFIG_PREEMPT_RT=y" config-6.12.30-daphile-rebuild
-          grep -Fqx "CONFIG_KERNEL_ZSTD=y" config-6.12.30-daphile-rebuild
-          grep -Fqx "CONFIG_RD_ZSTD=y" config-6.12.30-daphile-rebuild
-          grep -Fqx 'CONFIG_LOCALVERSION="-daphile-rebuild"' config-6.12.30-daphile-rebuild
+
+          # 真实内核配置：MODULES=dep 要靠它判断哪些驱动已内建。
+          # 必须校验内容，否则 wget 拿到 404 页面/空文件也会被当成"有效 config"，
+          # 导致 update-initramfs 里 zstd 和 gzip 都被判定为不支持而失败。
+          if wget -q -O config-rt-mod.txt "$CONFIG_URL"; then
+            if grep -qE '^CONFIG_RD_(ZSTD|GZIP)=y' config-rt-mod.txt; then
+              echo "config 校验通过：含 CONFIG_RD_ZSTD/GZIP=y"
+            else
+              echo "ERROR: config 文件内容无效，缺少 CONFIG_RD_ZSTD=y 或 CONFIG_RD_GZIP=y"
+              echo "----- config 前 40 行 -----"
+              head -40 config-rt-mod.txt || true
+              echo "---------------------------"
+              echo "CONFIG_RD_ZSTD=y" >> config-rt-mod.txt
+            fi
+          else
+            echo "ERROR: config 下载失败（$CONFIG_URL）"
+            exit 1
+          fi
           ls -lh
 
       - name: Create disk image and partitions

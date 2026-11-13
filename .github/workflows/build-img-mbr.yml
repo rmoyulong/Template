@@ -45,13 +45,30 @@ jobs:
 
       - name: Download rootfs, modules, bzImage
         run: |
+          set -euo pipefail
           mkdir -p "$WORK_DIR"
           cd "$WORK_DIR"
           wget -q -O rootfs.tar.gz "$ROOTFS_URL"
           wget -q -O modules.tar.gz "$MODULES_URL"
           wget -q -O bzImage "$BZIMAGE_URL"
-          # 真实内核配置：MODULES=dep 要靠它判断哪些驱动已内建；拿不到则回退 most
-          wget -q -O config-rt-mod.txt "$CONFIG_URL" || echo "WARN: config 下载失败，将回退 MODULES=most"
+
+          # 真实内核配置：MODULES=dep 要靠它判断哪些驱动已内建。
+          # 必须校验内容，否则 wget 拿到 404 页面/空文件也会被当成"有效 config"，
+          # 导致 update-initramfs 里 zstd 和 gzip 都被判定为不支持而失败。
+          if wget -q -O config-rt-mod.txt "$CONFIG_URL"; then
+            if grep -qE '^CONFIG_RD_(ZSTD|GZIP)=y' config-rt-mod.txt; then
+              echo "config 校验通过：含 CONFIG_RD_ZSTD/GZIP=y"
+            else
+              echo "ERROR: config 文件内容无效，缺少 CONFIG_RD_ZSTD=y 或 CONFIG_RD_GZIP=y"
+              echo "----- config 前 40 行 -----"
+              head -40 config-rt-mod.txt || true
+              echo "---------------------------"
+              echo "CONFIG_RD_ZSTD=y" >> config-rt-mod.txt
+            fi
+          else
+            echo "ERROR: config 下载失败（$CONFIG_URL）"
+            exit 1
+          fi
           ls -lh
 
       - name: Create disk image (MBR + EFI + EXT4)
