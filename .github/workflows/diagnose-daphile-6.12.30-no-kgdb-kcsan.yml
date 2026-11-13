@@ -1,0 +1,341 @@
+name: Diagnose Daphile 6.12.30 without KGDB and KCSAN
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: daphile-6.12.30-no-kgdb-kcsan-diagnostic
+  cancel-in-progress: false
+
+env:
+  DAPHILE_DIR: 6.12.30-daphile
+  KERNEL_VERSION: 6.12.30
+  BASE_KERNEL_RELEASE: 6.12.30-daphile-rebuild
+  DIAG_KERNEL_RELEASE: 6.12.30-daphile-rebuild-nokgdb-kcsan
+  BUILD_JOBS: 3
+  EXPECTED_CONFIG_SHA256: 1869e4840178f42c8974b8a8caf938b0fcbe17dbf72979f587ba5afc033ce42e
+
+jobs:
+  diagnostic-build:
+    name: Build isolated EFI and early-console diagnostic kernel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h
+
+      - name: Switch Ubuntu runner mirror
+        run: |
+          set -euo pipefail
+          echo "===== ORIGINAL APT SOURCES ====="
+          cat /etc/apt/sources.list.d/ubuntu.sources
+          sudo sed -i -E \
+            's|mirror\+file:/etc/apt/apt-mirrors\.txt|https://mirrors.aliyun.com/ubuntu/|g; s|https?://azure\.archive\.ubuntu\.com/ubuntu/?|https://mirrors.aliyun.com/ubuntu/|g' \
+            /etc/apt/sources.list.d/ubuntu.sources
+          echo "===== UPDATED APT SOURCES ====="
+          cat /etc/apt/sources.list.d/ubuntu.sources
+
+      - name: Install kernel build dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential libncurses-dev bison flex libssl-dev libelf-dev \
+            bc xz-utils zstd cpio dwarves kmod perl python3 rsync wget git \
+            ccache gzip
+
+      - name: Download and verify Linux 6.12.30 source
+        run: |
+          set -euo pipefail
+          wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.30.tar.xz
+          wget -q https://cdn.kernel.org/pub/linux/kernel/v6.x/sha256sums.asc
+          grep -F linux-6.12.30.tar.xz sha256sums.asc | sha256sum -c -
+          tar -xJf linux-6.12.30.tar.xz
+          cd linux-6.12.30
+          test "$(make -s kernelversion)" = "$KERNEL_VERSION"
+
+      - name: Download and verify the previously reviewed baseline
+        working-directory: linux-6.12.30
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+
+          # Use the exact candidate produced by the successful, reviewed
+          # config-audit run. Do not regenerate it with localmodconfig:
+          # streamline_config.pl can make different select-provider choices.
+          gh run download 43206623200 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name daphile-6.12.30-config-audit \
+            --dir "$GITHUB_WORKSPACE/config-audit"
+
+          CANDIDATE="$GITHUB_WORKSPACE/config-audit/config.candidate"
+          test -s "$CANDIDATE"
+          ACTUAL="$(sha256sum "$CANDIDATE" | awk '{print $1}')"
+          echo "Expected baseline: $EXPECTED_CONFIG_SHA256"
+          echo "Actual baseline:   $ACTUAL"
+          test "$ACTUAL" = "$EXPECTED_CONFIG_SHA256"
+
+          cp "$CANDIDATE" .config
+          test "$(sha256sum .config | awk '{print $1}')" = "$EXPECTED_CONFIG_SHA256"
+          make syncconfig
+          test "$(sha256sum .config | awk '{print $1}')" = "$EXPECTED_CONFIG_SHA256"
+
+          BASE_RELEASE="$(make -s kernelrelease)"
+          test "$BASE_RELEASE" = "$BASE_KERNEL_RELEASE"
+
+          echo "Baseline config SHA256: $ACTUAL"
+          echo "Baseline kernel release: $BASE_RELEASE"
+
+      - name: Add EFI-stub and early-kernel diagnostics only
+        working-directory: linux-6.12.30
+        run: |
+          set -Eeuo pipefail
+
+          cp .config "$GITHUB_WORKSPACE/config-baseline-reviewed"
+
+          # Disable startup selftests and the KGDB/KCSAN debugging facilities
+          # implicated by the boot-time KCSAN report. Preserve FTRACE itself.
+          scripts/config --disable FTRACE_STARTUP_TEST
+          scripts/config --disable KGDB
+          scripts/config --disable KCSAN
+
+          # x86 EFI stub parses the built-in command line before kernel
+          # decompression. efi=debug therefore enables EFI-stub diagnostics.
+          # The remaining parameters enable EFI framebuffer earlycon and
+          # detailed kernel/initcall logging after control enters the kernel.
+          scripts/config --set-str CMDLINE \
+            "efi=debug earlycon=efifb keep_bootcon loglevel=8 ignore_loglevel initcall_debug"
+          scripts/config --disable CMDLINE_OVERRIDE
+          scripts/config --set-str LOCALVERSION "-daphile-rebuild-nokgdb-kcsan"
+
+          make olddefconfig
+          make syncconfig
+
+          # Prove that only the requested startup-test option and its Kconfig-dependent
+          # selftest helpers change, in addition to diagnostic CMDLINE/LOCALVERSION.
+          python3 - "$GITHUB_WORKSPACE/config-baseline-reviewed" .config <<'PY'
+          import sys
+          def read_config(path):
+              values = {}
+              with open(path, encoding="utf-8") as f:
+                  for line in f:
+                      line = line.rstrip()
+                      if line.startswith("CONFIG_") and "=" in line:
+                          key, value = line.split("=", 1)
+                          values[key] = value
+                      elif line.startswith("# CONFIG_") and line.endswith(" is not set"):
+                          values[line[2:-11]] = "n"
+              return values
+
+          before = read_config(sys.argv[1])
+          after = read_config(sys.argv[2])
+          changed = sorted(k for k in set(before) | set(after) if before.get(k, "n") != after.get(k, "n"))
+          print("Changed Kconfig symbols:", changed)
+          # Permit only the explicitly requested diagnostic changes and
+          # Kconfig symbols directly belonging to KGDB/KCSAN or their
+          # small debug-information/console-poll dependency closure.
+          allowed_prefixes = (
+              "CONFIG_CMDLINE",
+              "CONFIG_LOCALVERSION",
+              "CONFIG_FTRACE_",
+              "CONFIG_EVENT_TRACE_",
+              "CONFIG_KGDB",
+              "CONFIG_KCSAN",
+          )
+          allowed_exact = {
+              "CONFIG_CONSOLE_POLL",
+              "CONFIG_DEBUG_INFO",
+              "CONFIG_DEBUG_INFO_NONE",
+              "CONFIG_DEBUG_INFO_DWARF_TOOLCHAIN_DEFAULT",
+              "CONFIG_DEBUG_INFO_DWARF4",
+              "CONFIG_DEBUG_INFO_DWARF5",
+          }
+          unexpected = [k for k in changed
+                        if not k.startswith(allowed_prefixes) and k not in allowed_exact]
+          if unexpected:
+              print("ERROR: unexpected Kconfig changes:", unexpected, file=sys.stderr)
+              sys.exit(1)
+
+          # Kconfig may omit disabled symbols entirely instead of writing
+          # an explicit "# CONFIG_FOO is not set" line. Missing means n.
+          disabled_helpers = [
+              "CONFIG_FTRACE_STARTUP_TEST",
+              "CONFIG_FTRACE_SELFTEST",
+              "CONFIG_EVENT_TRACE_STARTUP_TEST",
+              "CONFIG_EVENT_TRACE_TEST_SYSCALLS",
+              "CONFIG_KGDB",
+              "CONFIG_KGDB_TESTS",
+              "CONFIG_KGDB_TESTS_ON_BOOT",
+              "CONFIG_KGDB_LOW_LEVEL_TRAP",
+              "CONFIG_KCSAN",
+              "CONFIG_KCSAN_SELFTEST",
+              "CONFIG_KCSAN_EARLY_ENABLE",
+          ]
+          for symbol in disabled_helpers:
+              value = after.get(symbol, "n")
+              if value != "n":
+                  print(f"ERROR: {symbol} must be disabled, got {value}", file=sys.stderr)
+                  sys.exit(1)
+
+          # No KGDB/KCSAN option may remain enabled, including hidden helpers.
+          for symbol, value in after.items():
+              if (symbol.startswith("CONFIG_KGDB") or symbol.startswith("CONFIG_KCSAN")) and value != "n":
+                  print(f"ERROR: {symbol} unexpectedly remains enabled: {value}", file=sys.stderr)
+                  sys.exit(1)
+          PY
+          diff -u "$GITHUB_WORKSPACE/config-baseline-reviewed" .config > "$GITHUB_WORKSPACE/config-diagnostic.diff" || true
+
+          require_config() {
+            local symbol="$1"
+            local expected="$2"
+            local actual
+            actual="$(grep -E "^$symbol=" .config || true)"
+            if [[ "$actual" != "$symbol=$expected" ]]; then
+              echo "::error::Configuration mismatch: $symbol"
+              echo "Expected: $symbol=$expected"
+              echo "Actual: ${actual:-not set}"
+              exit 1
+            fi
+          }
+
+          require_config CONFIG_CMDLINE_BOOL y
+          require_config CONFIG_CMDLINE '"efi=debug earlycon=efifb keep_bootcon loglevel=8 ignore_loglevel initcall_debug"'
+          require_config CONFIG_EARLY_PRINTK y
+          require_config CONFIG_EFI y
+          require_config CONFIG_EFI_STUB y
+          require_config CONFIG_EFI_EARLYCON y
+          require_config CONFIG_SERIAL_EARLYCON y
+          require_config CONFIG_X86_VERBOSE_BOOTUP y
+          require_config CONFIG_PRINTK_TIME y
+          require_config CONFIG_PREEMPT_RT y
+          require_config CONFIG_HZ_250 y
+          require_config CONFIG_HZ 250
+          require_config CONFIG_KERNEL_ZSTD y
+          require_config CONFIG_LOCALVERSION '"-daphile-rebuild-nokgdb-kcsan"'
+
+          # The Python config parser above verifies these options are n;
+          # some Kconfig-disabled helper symbols are absent from .config.
+          require_config CONFIG_FUNCTION_TRACER y
+          require_config CONFIG_FUNCTION_GRAPH_TRACER y
+          require_config CONFIG_DYNAMIC_FTRACE y
+
+          if grep -qx 'CONFIG_CMDLINE_OVERRIDE=y' .config; then
+            echo "::error::Diagnostic kernel must not override bootloader arguments"
+            exit 1
+          fi
+
+          KREL="$(make -s kernelrelease)"
+          echo "Expected diagnostic release: $DIAG_KERNEL_RELEASE"
+          echo "Actual diagnostic release:   $KREL"
+          test "$KREL" = "$DIAG_KERNEL_RELEASE"
+
+          cp .config "$GITHUB_WORKSPACE/config-diagnostic"
+          sha256sum "$GITHUB_WORKSPACE/config-baseline-reviewed" \
+            "$GITHUB_WORKSPACE/config-diagnostic" \
+            > "$GITHUB_WORKSPACE/config-sha256.txt"
+
+          {
+            echo "Daphile Linux 6.12.30 no-KGDB/KCSAN diagnostic build"
+            echo "================================================="
+            echo "Reviewed baseline SHA256: $EXPECTED_CONFIG_SHA256"
+            echo "Diagnostic kernel release: $KREL"
+            echo "Diagnostic config SHA256: $(sha256sum .config | awk '{print $1}')"
+            echo
+            echo "Built-in command line:"
+            grep '^CONFIG_CMDLINE=' .config
+            echo
+            echo "Diagnostic settings:"
+            grep -E '^(CONFIG_(CMDLINE_BOOL|EARLY_PRINTK|EFI|EFI_STUB|EFI_EARLYCON|SERIAL_EARLYCON|X86_VERBOSE_BOOTUP|PRINTK_TIME|PREEMPT_RT|HZ_250|HZ|KERNEL_ZSTD|LOCALVERSION|FTRACE_SELFTEST|FUNCTION_TRACER|FUNCTION_GRAPH_TRACER|DYNAMIC_FTRACE))=' .config
+            grep 'FTRACE_STARTUP_TEST' .config
+            echo "CMDLINE_OVERRIDE:"
+            grep -E '^(CONFIG_CMDLINE_OVERRIDE=y|# CONFIG_CMDLINE_OVERRIDE is not set)$' .config || true
+            echo
+            echo "KGDB and KCSAN are disabled; all KGDB/KCSAN-prefixed symbols are checked off."
+            echo "The reviewed baseline config is preserved separately."
+            echo "The normal build workflow and its Release assets are not modified."
+          } | tee "$GITHUB_WORKSPACE/early-boot-diagnostic-report.txt"
+
+      - name: Build diagnostic bzImage and modules
+        working-directory: linux-6.12.30
+        run: |
+          set -Eeuo pipefail
+          export ARCH=x86
+          export CC="ccache gcc"
+          ccache -M 3G
+
+          KREL="$(make -s kernelrelease)"
+          test "$KREL" = "$DIAG_KERNEL_RELEASE"
+
+          make -j"$BUILD_JOBS" bzImage modules
+          test -s arch/x86/boot/bzImage
+          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/bzImage-nokgdb-kcsan"
+
+          echo "Built kernel release: $KREL"
+          ls -lh "$GITHUB_WORKSPACE/bzImage-nokgdb-kcsan"
+
+      - name: Install modules and generate module dependency metadata
+        working-directory: linux-6.12.30
+        run: |
+          set -Eeuo pipefail
+
+          KREL="$(make -s kernelrelease)"
+          test "$KREL" = "$DIAG_KERNEL_RELEASE"
+
+          STAGE="$GITHUB_WORKSPACE/modules-staging"
+          MODDIR="$STAGE/lib/modules/$KREL"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+
+          make INSTALL_MOD_PATH="$STAGE" modules_install
+          test -d "$MODDIR"
+          rm -f "$MODDIR/build" "$MODDIR/source"
+
+          while IFS= read -r -d '' MODULE; do
+            gzip -t "$MODULE"
+            gzip -d "$MODULE"
+          done < <(find "$MODDIR" -type f -name '*.ko.gz' -print0)
+
+          depmod -a -b "$STAGE" "$KREL"
+          test -s "$MODDIR/modules.dep"
+          test -s "$MODDIR/modules.builtin"
+
+          tar --numeric-owner -czf "$GITHUB_WORKSPACE/modules-nokgdb-kcsan.tar.gz" \
+            -C "$STAGE/lib/modules" "$KREL"
+          test -s "$GITHUB_WORKSPACE/modules-nokgdb-kcsan.tar.gz"
+
+          echo "Diagnostic module directory: $MODDIR"
+          du -sh "$MODDIR"
+          ls -lh "$GITHUB_WORKSPACE/modules-nokgdb-kcsan.tar.gz"
+
+      - name: Upload diagnostic artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: daphile-6.12.30-no-kgdb-kcsan-diagnostic
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            bzImage-nokgdb-kcsan
+            modules-nokgdb-kcsan.tar.gz
+            config-baseline-reviewed
+            config-diagnostic
+            config-sha256.txt
+            config-diagnostic.diff
+            early-boot-diagnostic-report.txt
+            config-audit/config.candidate
+            config-audit/audit-report.txt
+            linux-6.12.30/.config
