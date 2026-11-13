@@ -41,7 +41,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y wget parted e2fsprogs dosfstools mtools xorriso rsync \
-            grub-pc-bin grub-efi-amd64-bin grub-efi-ia32-bin grub-common
+            grub-pc-bin grub-efi-amd64-bin grub-efi-ia32-bin grub-common zstd
 
       - name: Download rootfs, modules, bzImage
         run: |
