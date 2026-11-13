@@ -11,7 +11,7 @@ on:
   push:
     paths:
       - ".github/workflows/build-music-kernel.yml"
-      - "kernel_config_migration_7.3.x/**"
+      - "kernel_config_migration_7.3.x/config-7.3.x-rt-mod-daphile-final.conf"
 
 permissions:
   contents: write

@@ -21,8 +21,8 @@ jobs:
       BUILD_JOBS: 2
       KERNEL_VERSION: "6.12.30"
       KERNEL_SUFFIX: "-Daphile-MO"
-      KERNEL_PATH: "6.12.30-daphile"
-      KERNEL_CONFIG: "config"
+      KERNEL_PATH: "kernel_config_migration_7.3.x"
+      KERNEL_CONFIG: "new.conf"
       #KERNEL_CONFIG: "config-7.3.x-rt-mod-daphile-final.conf"
 
     steps:

@@ -5,7 +5,11 @@ on:
   push:
     tags:
       - 'img-*'
-
+  push:
+    paths:
+      - ".github/workflows/rebuild_daphile-6.12.30-kerne.yml"
+      - "kernel_config_migration_7.3.x/new.conf"
+      
 permissions:
   contents: write
 
@@ -410,7 +414,7 @@ jobs:
             ${{ env.WORK_DIR }}/debian-rootfs-mbr-daphile.img.gz
             ${{ env.WORK_DIR }}/debian-rootfs-mbr-daphile.img.gz.sha256
           body: |
-            Debian IMG（MBR 兼容版）-音乐7.3.x内核
+            Debian IMG（MBR 兼容版）-自编达菲6.12.30内核
             分区表为 MBR，支持老 BIOS / 32 位 UEFI / 64 位 UEFI
             内核：${{ env.KVER }}
             rootfs：Debian trixie + SSH/FTP/Nginx/PHP8/LMS
