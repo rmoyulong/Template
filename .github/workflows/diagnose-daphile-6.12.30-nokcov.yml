@@ -1,4 +1,4 @@
-name: Diagnose Daphile 6.12.30 without KGDB and KCSAN
+name: Diagnose Daphile 6.12.30 without KGDB, KCSAN and KCOV
 
 on:
   workflow_dispatch:
@@ -8,14 +8,14 @@ permissions:
   actions: read
 
 concurrency:
-  group: daphile-6.12.30-no-kgdb-kcsan-diagnostic
+  group: daphile-6.12.30-nokcov-diagnostic
   cancel-in-progress: false
 
 env:
   DAPHILE_DIR: 6.12.30-daphile
   KERNEL_VERSION: 6.12.30
   BASE_KERNEL_RELEASE: 6.12.30-daphile-rebuild
-  DIAG_KERNEL_RELEASE: 6.12.30-daphile-rebuild-nokgdb-kcsan
+  DIAG_KERNEL_RELEASE: 6.12.30-daphile-rebuild-nokcov
   BUILD_JOBS: 3
   EXPECTED_CONFIG_SHA256: 1869e4840178f42c8974b8a8caf938b0fcbe17dbf72979f587ba5afc033ce42e
 
@@ -100,7 +100,7 @@ jobs:
           echo "Baseline config SHA256: $ACTUAL"
           echo "Baseline kernel release: $BASE_RELEASE"
 
-      - name: Add EFI-stub and early-kernel diagnostics only
+      - name: Add EFI-stub diagnostics; disable startup tests, KGDB, KCSAN and KCOV
         working-directory: linux-6.12.30
         run: |
           set -Eeuo pipefail
@@ -112,6 +112,7 @@ jobs:
           scripts/config --disable FTRACE_STARTUP_TEST
           scripts/config --disable KGDB
           scripts/config --disable KCSAN
+          scripts/config --disable KCOV
 
           # x86 EFI stub parses the built-in command line before kernel
           # decompression. efi=debug therefore enables EFI-stub diagnostics.
@@ -120,7 +121,7 @@ jobs:
           scripts/config --set-str CMDLINE \
             "efi=debug earlycon=efifb keep_bootcon loglevel=8 ignore_loglevel initcall_debug"
           scripts/config --disable CMDLINE_OVERRIDE
-          scripts/config --set-str LOCALVERSION "-daphile-rebuild-nokgdb-kcsan"
+          scripts/config --set-str LOCALVERSION "-daphile-rebuild-nokcov"
 
           make olddefconfig
           make syncconfig
@@ -156,6 +157,7 @@ jobs:
               "CONFIG_KGDB",
               "CONFIG_KDB_",
               "CONFIG_KCSAN",
+              "CONFIG_KCOV",
           )
           allowed_exact = {
               # Hidden Kconfig symbols whose visibility/value depends on KGDB.
@@ -193,6 +195,12 @@ jobs:
               "CONFIG_KCSAN",
               "CONFIG_KCSAN_SELFTEST",
               "CONFIG_KCSAN_EARLY_ENABLE",
+
+              "CONFIG_KCOV",
+              "CONFIG_KCOV_ENABLE_COMPARISONS",
+              "CONFIG_KCOV_INSTRUMENT_ALL",
+              "CONFIG_KCOV_SELFTEST",
+              "CONFIG_KCOV_IRQ_AREA_SIZE",
           ]
           for symbol in disabled_helpers:
               value = after.get(symbol, "n")
@@ -200,9 +208,9 @@ jobs:
                   print(f"ERROR: {symbol} must be disabled, got {value}", file=sys.stderr)
                   sys.exit(1)
 
-          # No KGDB/KCSAN option may remain enabled, including hidden helpers.
+          # No KGDB/KCSAN/KCOV option may remain enabled, including hidden helpers.
           for symbol, value in after.items():
-              if (symbol.startswith(("CONFIG_KGDB", "CONFIG_KDB_", "CONFIG_KCSAN")) and value != "n"):
+              if (symbol.startswith(("CONFIG_KGDB", "CONFIG_KDB_", "CONFIG_KCSAN", "CONFIG_KCOV")) and value != "n"):
                   print(f"ERROR: {symbol} unexpectedly remains enabled: {value}", file=sys.stderr)
                   sys.exit(1)
           PY
@@ -234,7 +242,7 @@ jobs:
           require_config CONFIG_HZ_250 y
           require_config CONFIG_HZ 250
           require_config CONFIG_KERNEL_ZSTD y
-          require_config CONFIG_LOCALVERSION '"-daphile-rebuild-nokgdb-kcsan"'
+          require_config CONFIG_LOCALVERSION '"-daphile-rebuild-nokcov"'
 
           # The Python config parser above verifies these options are n;
           # some Kconfig-disabled helper symbols are absent from .config.
@@ -258,7 +266,7 @@ jobs:
             > "$GITHUB_WORKSPACE/config-sha256.txt"
 
           {
-            echo "Daphile Linux 6.12.30 no-KGDB/KCSAN diagnostic build"
+            echo "Daphile Linux 6.12.30 no-KGDB/KCSAN/KCOV diagnostic build"
             echo "================================================="
             echo "Reviewed baseline SHA256: $EXPECTED_CONFIG_SHA256"
             echo "Diagnostic kernel release: $KREL"
@@ -273,7 +281,7 @@ jobs:
             echo "CMDLINE_OVERRIDE:"
             grep -E '^(CONFIG_CMDLINE_OVERRIDE=y|# CONFIG_CMDLINE_OVERRIDE is not set)$' .config || true
             echo
-            echo "KGDB and KCSAN are disabled; all KGDB/KCSAN-prefixed symbols are checked off."
+            echo "KGDB, KCSAN and KCOV are disabled; all corresponding prefixed symbols are checked off."
             echo "The reviewed baseline config is preserved separately."
             echo "The normal build workflow and its Release assets are not modified."
           } | tee "$GITHUB_WORKSPACE/early-boot-diagnostic-report.txt"
@@ -291,10 +299,10 @@ jobs:
 
           make -j"$BUILD_JOBS" bzImage modules
           test -s arch/x86/boot/bzImage
-          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/bzImage-nokgdb-kcsan"
+          cp arch/x86/boot/bzImage "$GITHUB_WORKSPACE/bzImage-nokcov"
 
           echo "Built kernel release: $KREL"
-          ls -lh "$GITHUB_WORKSPACE/bzImage-nokgdb-kcsan"
+          ls -lh "$GITHUB_WORKSPACE/bzImage-nokcov"
 
       - name: Install modules and generate module dependency metadata
         working-directory: linux-6.12.30
@@ -322,24 +330,24 @@ jobs:
           test -s "$MODDIR/modules.dep"
           test -s "$MODDIR/modules.builtin"
 
-          tar --numeric-owner -czf "$GITHUB_WORKSPACE/modules-nokgdb-kcsan.tar.gz" \
+          tar --numeric-owner -czf "$GITHUB_WORKSPACE/modules-nokcov.tar.gz" \
             -C "$STAGE/lib/modules" "$KREL"
-          test -s "$GITHUB_WORKSPACE/modules-nokgdb-kcsan.tar.gz"
+          test -s "$GITHUB_WORKSPACE/modules-nokcov.tar.gz"
 
           echo "Diagnostic module directory: $MODDIR"
           du -sh "$MODDIR"
-          ls -lh "$GITHUB_WORKSPACE/modules-nokgdb-kcsan.tar.gz"
+          ls -lh "$GITHUB_WORKSPACE/modules-nokcov.tar.gz"
 
       - name: Upload diagnostic artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: daphile-6.12.30-no-kgdb-kcsan-diagnostic
+          name: daphile-6.12.30-nokcov-diagnostic
           if-no-files-found: warn
           retention-days: 14
           path: |
-            bzImage-nokgdb-kcsan
-            modules-nokgdb-kcsan.tar.gz
+            bzImage-nokcov
+            modules-nokcov.tar.gz
             config-baseline-reviewed
             config-diagnostic
             config-sha256.txt
