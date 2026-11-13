@@ -39,7 +39,7 @@ jobs:
                       /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
           sudo apt-get clean
           df -h
-            
+
       - name: Install tools
         run: |
           sudo apt-get update
@@ -48,13 +48,30 @@ jobs:
 
       - name: Download rootfs, modules, bzImage
         run: |
+          set -euo pipefail
           mkdir -p "$WORK_DIR"
           cd "$WORK_DIR"
           wget -q -O rootfs.tar.gz "$ROOTFS_URL"
           wget -q -O modules.tar.gz "$MODULES_URL"
           wget -q -O bzImage "$BZIMAGE_URL"
-          # 真实内核配置：MODULES=dep 要靠它判断哪些驱动已内建；拿不到则回退 most
-          wget -q -O config-rt-mod.txt "$CONFIG_URL" || echo "WARN: config 下载失败，将回退 MODULES=most"
+
+          # 真实内核配置：MODULES=dep 要靠它判断哪些驱动已内建。
+          # 必须校验内容，否则 wget 拿到 404 页面/空文件也会被当成"有效 config"，
+          # 导致 update-initramfs 里 zstd 和 gzip 都被判定为不支持而失败。
+          if wget -q -O config-rt-mod.txt "$CONFIG_URL"; then
+            if grep -qE '^CONFIG_RD_(ZSTD|GZIP)=y' config-rt-mod.txt; then
+              echo "config 校验通过：含 CONFIG_RD_ZSTD/GZIP=y"
+            else
+              echo "ERROR: config 文件内容无效，缺少 CONFIG_RD_ZSTD=y 或 CONFIG_RD_GZIP=y"
+              echo "----- config 前 40 行 -----"
+              head -40 config-rt-mod.txt || true
+              echo "---------------------------"
+              exit 1
+            fi
+          else
+            echo "ERROR: config 下载失败（$CONFIG_URL）"
+            exit 1
+          fi
           ls -lh
 
       - name: Create disk image (MBR + EFI + EXT4)
@@ -114,19 +131,19 @@ jobs:
           #修改为中国时间
           sudo rm -rf /mnt/rootfs/etc/localtime
           sudo ln -s /usr/share/zoneinfo/Asia/Shanghai /mnt/rootfs/etc/localtime
-          
+
           #中文环境配置
           #sudo mkdir -p "/mnt/rootfs/etc/default"
           sudo cp ${{ github.workspace }}/patch/locale.conf /mnt/rootfs/etc/locale.conf
           sudo cp ${{ github.workspace }}/patch/locale.gen /mnt/rootfs/etc/locale.gen
           cat "/mnt/rootfs/etc/default/locale.conf"
           cat "/mnt/rootfs/etc/locale.gen"
-          
+
           #asound.conf squeezelit配置
           sudo cp ${{ github.workspace }}/patch/asound.conf_daphile /mnt/rootfs/etc/asound.conf
           sudo cp ${{ github.workspace }}/patch/squeezelite_daphile /mnt/rootfs/etc/default/squeezelite
-          ###################################################          
-          
+          ###################################################
+
           #####添加当前系统rootfs自动扩容脚本
           sudo cp ${{ github.workspace }}/patch/resize_rootfs.sh /mnt/rootfs/root/resize_rootfs.sh
           sudo chmod 755 /mnt/rootfs/root/resize_rootfs.sh
@@ -135,7 +152,7 @@ jobs:
           sudo cp ${{ github.workspace }}/patch/.bashrc /mnt/rootfs/root/.bashrc
           sudo chmod 0644 /mnt/rootfs/root/.bashrc
           ###################
-          
+
           # 放入安装脚本（MBR 版，两份）
           #   /root/install.sh      ← patch/install-mbr.sh       （rsync 当前系统整机到目标盘）
           #   /root/install-plus.sh ← patch/install-mbr-plus.sh  （解压 /root/rootfs.tar.gz）
@@ -197,6 +214,7 @@ jobs:
 
       - name: Generate initramfs and install GRUB
         run: |
+          set -euo pipefail
           LOOP="${{ env.LOOP }}"
           ROOTFS_UUID="${{ env.ROOTFS_UUID }}"
 
@@ -223,42 +241,56 @@ jobs:
           sudo mount --bind /mnt/efi /mnt/rootfs/boot/efi
 
           # ---------- initramfs 策略（决定开机快慢的关键）----------
-          # 之前这里只写了一个仅含 CONFIG_RD_GZIP=y 的"假 config"。initramfs-tools
-          # 的 MODULES=dep 需要真实 /boot/config-$KVER 才知道哪些驱动已经内建，
-          # 假 config 判断不准，所以当时只能退而用 most —— 把 /lib/modules 下
-          # 所有模块全塞进 initramfs。J1900 这类机器开机最早期要整体解压它，
-          # 这正是"同一台机器启动很慢"的主因。现在改用 build-kernel 的真实配置。
-          if [ -f "$WORK_DIR/config-rt-mod.txt" ]; then
+          # MODULES=dep 需要真实 /boot/config-$KVER 才知道哪些驱动已经内建。
+          # 这里再次校验 config 内容，只有确认含压缩支持符号才启用 dep，
+          # 否则回退 most，避免 update-initramfs 因"zstd/gzip 都不支持"而失败。
+          CONFIG_OK=0
+          if [ -f "$WORK_DIR/config-rt-mod.txt" ] && \
+             grep -qE '^CONFIG_RD_(ZSTD|GZIP)=y' "$WORK_DIR/config-rt-mod.txt"; then
+            CONFIG_OK=1
+          fi
+
+          if [ "$CONFIG_OK" = "1" ]; then
             sudo cp "$WORK_DIR/config-rt-mod.txt" "/mnt/rootfs/boot/config-$KVER"
             MODULES_MODE=dep
-            echo "已放入真实内核配置 → 采用 MODULES=dep（initramfs 最小化）"
+            # COMPRESS 跟随内核实际支持：优先 zstd，不支持则 gzip
+            if grep -qE '^CONFIG_RD_ZSTD=y' "$WORK_DIR/config-rt-mod.txt"; then
+              COMPRESS_MODE=zstd
+            else
+              COMPRESS_MODE=gzip
+            fi
+            echo "已放入有效内核配置 → MODULES=dep, COMPRESS=$COMPRESS_MODE"
           else
             sudo tee "/mnt/rootfs/boot/config-$KVER" > /dev/null <<'CFGEOF'
-          CONFIG_RD_ZSTD=y
+          CONFIG_RD_GZIP=y
           CFGEOF
             MODULES_MODE=most
-            echo "WARN: 未取到真实 config，回退 MODULES=most（initramfs 会偏大）"
+            COMPRESS_MODE=gzip
+            echo "WARN: 未取到有效 config，回退 MODULES=most, COMPRESS=gzip（initramfs 会偏大）"
           fi
 
           sudo mkdir -p /mnt/rootfs/etc/initramfs-tools
-          # MODULES=dep：只放入挂载根设备真正需要的模块。本内核已把 SATA、USB
-          #   控制器、USB 存储、键鼠 HID、VT 控制台、ext4 全部内建，所以这里
-          #   几乎什么都不用放 → initramfs 极小、开机极快。无线/声卡等 =m 驱动
-          #   改由 udev 在根分区挂载之后再加载。
-          # COMPRESS=zstd：initramfs 自身也用 zstd（内核默认带 CONFIG_RD_ZSTD=y
-          #   解压支持），解压速度约为 gzip 的 2~3 倍。
-          # FRAMEBUFFER=y：initramfs 阶段启用帧缓冲控制台（Plymouth 需要）。
-          # 想回到"大而全"的旧行为：把 MODULES 改回 most 即可。
           sudo tee /mnt/rootfs/etc/initramfs-tools/initramfs.conf > /dev/null <<CONFEOF
           MODULES=${MODULES_MODE}
-          COMPRESS=zstd
+          COMPRESS=${COMPRESS_MODE}
           FRAMEBUFFER=y
           CONFEOF
 
-          sudo chroot /mnt/rootfs /bin/bash -c "depmod -a $KVER"
-          sudo chroot /mnt/rootfs /bin/bash -c "update-initramfs -c -k $KVER"
+          sudo chroot /mnt/rootfs /bin/bash -c "depmod -a $KVER" \
+            || { echo "ERROR: depmod 失败"; exit 1; }
+
+          if ! sudo chroot /mnt/rootfs /bin/bash -c "update-initramfs -c -k $KVER"; then
+            echo "ERROR: update-initramfs 失败，诊断信息："
+            echo "--- /boot/config-$KVER 前 20 行 ---"
+            sudo head -20 "/mnt/rootfs/boot/config-$KVER" || true
+            echo "--- /lib/modules/$KVER 是否存在 ---"
+            sudo ls -ld "/mnt/rootfs/lib/modules/$KVER" || true
+            echo "--- initramfs.conf ---"
+            sudo cat /mnt/rootfs/etc/initramfs-tools/initramfs.conf || true
+            exit 1
+          fi
           if [ ! -f "/mnt/rootfs/boot/initrd.img-$KVER" ]; then
-            echo "ERROR: initramfs 生成失败"
+            echo "ERROR: initramfs 生成失败（文件不存在）"
             exit 1
           fi
           echo "initramfs 生成成功"
