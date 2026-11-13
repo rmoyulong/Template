@@ -24,7 +24,10 @@ jobs:
       ARCH: x86
       BUILD_JOBS: 2
       KERNEL_VERSION: "7.3.4"
-      KERNEL_SUFFIX: -music
+      KERNEL_SUFFIX: "-music"
+      KERNEL_PATH: "kernel_config_migration_7.3.x"
+      KERNEL_CONFIG: "new.conf"
+      #KERNEL_CONFIG: "config-7.3.x-rt-mod-daphile-final.conf"
 
     steps:
       - name: 检出仓库
@@ -127,8 +130,8 @@ jobs:
       - name: 加载最终内核配置
         run: |
           cd "linux-${KERNEL_VERSION}"
-          MIGRATION_DIR="$GITHUB_WORKSPACE/kernel_config_migration_7.3.x"
-          cp "$MIGRATION_DIR/config-7.3.x-rt-mod-daphile-final.conf" .config
+          MIGRATION_DIR="$GITHUB_WORKSPACE/${KERNEL_PATH}"
+          cp "$MIGRATION_DIR/${KERNEL_CONFIG}" .config
  
           #禁用证书相关选项，避免构建时报签名错误
           ./scripts/config --set-str SYSTEM_TRUSTED_KEYS ""
@@ -163,6 +166,7 @@ jobs:
           ./scripts/config --enable SND_PCM
           ./scripts/config --enable SND_TIMER
           ./scripts/config --enable SND_HRTIMER
+          ./scripts/config --enable HIGH_RES_TIMERS
           ./scripts/config --enable SND_ALOOP
           ./scripts/config --enable SND_PCI
           
