@@ -1,0 +1,480 @@
+name: 编译trixie RootFS(Debian+Netplan+SSH/FTP/Nginx/PHP8/LMS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      debian_suite:
+        description: 'Debian 套件(trixie = PHP 8.4)'
+        required: false
+        default: 'trixie'
+  push:
+    tags:
+      - 'rootfs-*'
+
+permissions:
+  contents: write
+
+env:
+  # ★ bookworm -> trixie
+  DEBIAN_SUITE: ${{ github.event.inputs.debian_suite || 'trixie' }}
+  MIRROR: http://ftp.cn.debian.org/debian/
+  ROOTFS_DIR: ${{ github.workspace }}/rootfs
+  OUT_DIR: ${{ github.workspace }}/out
+
+jobs:
+  build-rootfs:
+    name: 构建 RootFS
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h
+            
+      - name: Install debootstrap
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y debootstrap debian-archive-keyring gnupg dirmngr
+
+      # ★ 已删除 "Ensure bookworm archive key present" 步骤
+      #   Ubuntu 22.04 runner 的 debian-archive-keyring 足够新，
+      #   debootstrap 能自动验证 trixie Release 签名。
+
+      - name: Update debian-archive-keyring for trixie
+        run: |
+          set -euo pipefail
+          wget -O /tmp/debian-archive-keyring.deb \
+            http://deb.debian.org/debian/pool/main/d/debian-archive-keyring/debian-archive-keyring_2025.1_all.deb
+          sudo dpkg -i /tmp/debian-archive-keyring.deb
+          rm -f /tmp/debian-archive-keyring.deb
+          echo "[OK] debian-archive-keyring 2025.1 installed"    
+
+      - name: Debootstrap base system
+        run: |
+          set -euo pipefail
+          sudo mkdir -p "$ROOTFS_DIR"
+
+          # --components 仍用逗号分隔
+          # ★ php8.2-* -> php8.4-*
+          sudo debootstrap \
+            --arch=amd64 \
+            --variant=minbase \
+            --components=main,non-free-firmware \
+            --include=systemd,systemd-sysv,dbus,ca-certificates,openssh-server,vsftpd,nginx,php8.4-cgi,php8.4-fpm,php8.4-mysql,procps,iproute2,iputils-ping,net-tools,vim,curl,wget,netplan.io,systemd-resolved,initramfs-tools,kmod,grub-pc,grub-efi-amd64,grub-efi-ia32-bin,parted,dosfstools,e2fsprogs,rsync,fake-hwclock,systemd-timesyncd,usbutils,pciutils,evtest,kbd,dos2unix,mtools,firmware-realtek,firmware-iwlwifi,firmware-linux-free,plymouth,plymouth-themes,ffmpeg,squeezelite,sudo,alsa-utils,alsa-tools,ethtool,cloud-guest-utils,wireless-regdb,zstd \
+            "$DEBIAN_SUITE" "$ROOTFS_DIR" \
+            "$MIRROR"
+
+      - name: Verify firmware packages
+        run: |
+          set -euo pipefail
+          echo "===== 校验固件包是否装上（non-free-firmware 生效的标志）====="
+          for pkg in firmware-realtek firmware-linux-free; do
+            if sudo chroot "$ROOTFS_DIR" dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null \
+                 | grep -q "install ok installed"; then
+              echo "  [OK]   $pkg"
+            else
+              echo "  [FAIL] $pkg 未安装 —— 请检查 --components 是否为逗号分隔"
+              exit 1
+            fi
+          done
+          echo "----- 实际文件抽查 -----"
+          ls -1 "$ROOTFS_DIR/lib/firmware/rtl_nic" 2>/dev/null | head -5 || true
+          ls -1 "$ROOTFS_DIR/lib/firmware" 2>/dev/null | grep -i iwlwifi || true
+
+      - name: Configure APT sources
+        run: |
+          set -euo pipefail
+          # ★ security 源改为阿里云的 debian-security 路径（trixie 推荐 https）
+          sudo tee "$ROOTFS_DIR/etc/apt/sources.list" > /dev/null <<EOF
+          deb $MIRROR ${DEBIAN_SUITE} main non-free-firmware
+          deb $MIRROR ${DEBIAN_SUITE}-updates main non-free-firmware
+          deb http://security.debian.org/debian-security ${DEBIAN_SUITE}-security main non-free-firmware
+          EOF
+          echo "----- sources.list -----"
+          cat "$ROOTFS_DIR/etc/apt/sources.list"
+
+      - name: Configure LMS network sysctl
+        run: |
+          set -euo pipefail
+          sudo mkdir -p "$ROOTFS_DIR/etc/sysctl.d"
+          sudo tee "$ROOTFS_DIR/etc/sysctl.d/99-lms-network.conf" > /dev/null <<'EOF'
+          # LMS 高解析度音乐异步推流网络优化
+          net.core.somaxconn = 1024
+          net.core.netdev_max_backlog = 5000
+          net.core.rmem_max = 16777216
+          net.core.wmem_max = 16777216
+          net.ipv4.tcp_rmem = 4096 87380 16777216
+          net.ipv4.tcp_wmem = 4096 65536 16777216
+          EOF
+          echo "----- 99-lms-network.conf -----"
+          cat "$ROOTFS_DIR/etc/sysctl.d/99-lms-network.conf"
+          
+          sudo mkdir -p "$ROOTFS_DIR/etc/update-motd.d"
+          sudo cp ${{ github.workspace }}/patch/cats_banner $ROOTFS_DIR/etc/cats_banner
+          sudo tee "$ROOTFS_DIR/etc/update-motd.d/40-cats_banner" > /dev/null <<'EOF'
+          #!/bin/bash
+          set -o pipefail
+          cat /etc/cats_banner
+          EOF
+          sudo chmod +x $ROOTFS_DIR/etc/update-motd.d/40-cats_banner
+          
+          #修改为中国时间
+          sudo rm -rf $ROOTFS_DIR/etc/localtime
+          sudo ln -s /usr/share/zoneinfo/Asia/Shanghai $ROOTFS_DIR/etc/localtime
+
+          #修正为中文环境
+          sudo mkdir -p "$ROOTFS_DIR/etc/default"
+          sudo cp ${{ github.workspace }}/patch/locale.conf $ROOTFS_DIR/etc/default/locale.conf
+          sudo cp ${{ github.workspace }}/patch/locale.gen $ROOTFS_DIR/etc/locale.gen
+          sudo cp ${{ github.workspace }}/patch/locale.conf $ROOTFS_DIR/etc/locale.conf
+
+      - name: Configure netplan (DHCP dynamic IP)
+        run: |
+          set -euo pipefail
+          sudo mkdir -p "$ROOTFS_DIR/etc/systemd/network"
+          sudo ln -sf /dev/null "$ROOTFS_DIR/etc/systemd/network/99-default.link"
+
+          sudo mkdir -p "$ROOTFS_DIR/etc/netplan"
+          sudo tee "$ROOTFS_DIR/etc/netplan/01-netcfg.yaml" > /dev/null <<'EOF'
+          network:
+            version: 2
+            renderer: networkd
+            ethernets:
+              all-eth:
+                match:
+                  name: "*"
+                dhcp4: true
+                dhcp6: true
+          EOF
+          sudo chmod 600 "$ROOTFS_DIR/etc/netplan/01-netcfg.yaml"
+
+      - name: Configure rootfs (chroot)
+        run: |
+          set -euo pipefail
+
+          sudo mount --bind /dev  "$ROOTFS_DIR/dev"
+          sudo mount --bind /proc "$ROOTFS_DIR/proc"
+          sudo mount --bind /sys  "$ROOTFS_DIR/sys"
+          cleanup() {
+            sudo umount "$ROOTFS_DIR/dev"  || true
+            sudo umount "$ROOTFS_DIR/proc" || true
+            sudo umount "$ROOTFS_DIR/sys"  || true
+          }
+          trap cleanup EXIT
+
+          # chroot 内 DNS：rootfs 的 /etc/resolv.conf 可能是悬空 symlink，
+          # 直接 cp 会报 "not writing through dangling symlink"，故先删除再写
+          sudo rm -f "$ROOTFS_DIR/etc/resolv.conf"
+          sudo cp /etc/resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
+
+          # 把 LMS 安装脚本放进 rootfs 内再 chroot 执行
+          sudo tee "$ROOTFS_DIR/tmp/install-lms.sh" >/dev/null <<'EOF'
+          #!/bin/bash
+          set -euo pipefail
+
+          cd /
+
+          apt-get update
+          
+          apt-get install -y sudo samba samba-common-bin smbclient wsdd2 locales exfat-fuse exfatprogs git zip
+          
+          #添加中文
+          locale-gen zh_CN.UTF-8
+
+          #wget -O /tmp/lms.deb https://github.com/rmoyulong/Template/releases/download/daphilV/lms.deb
+          git clone https://github.com/rmoyulong/packages_lang_golang golang
+
+          # rootfs 是新建的，目录本不存在；rm -rf 仅为幂等清理，可保留也可删
+          rm -rf /var/lib/squeezeboxserver /var/log/squeezeboxserver
+
+          mkdir -p /var/lib/squeezeboxserver/prefs
+          mkdir -p /var/lib/squeezeboxserver/cache
+          mkdir -p /var/log/squeezeboxserver
+
+          # 先安装 deb（创建 squeezeboxserver 用户），失败也继续，靠 fix-broken 补依赖
+          #dpkg -i /tmp/lms.deb || true
+          dpkg -i ./golang/lms.deb || true
+          apt-get --fix-broken install -y
+
+          # 确认用户已存在，否则后面 chown 会给出晦涩错误
+          #id squeezeboxserver >/dev/null 2>&1 || { echo "squeezeboxserver 用户不存在"; exit 1; }
+          #chown -R squeezeboxserver:nogroup /var/lib/squeezeboxserver/prefs
+          #chown -R squeezeboxserver:nogroup /var/lib/squeezeboxserver/cache
+          #chown -R squeezeboxserver:nogroup /var/log/squeezeboxserver
+
+          #rm -f /tmp/lms.deb
+          rm -rf ./golang
+          EOF
+          sudo chmod +x "$ROOTFS_DIR/tmp/install-lms.sh"
+          sudo chroot "$ROOTFS_DIR" /bin/bash /tmp/install-lms.sh
+
+          printf 'debian\n' | sudo tee "$ROOTFS_DIR/etc/hostname" > /dev/null
+          printf '127.0.0.1\tlocalhost\n127.0.1.1\tdebian\n' | sudo tee "$ROOTFS_DIR/etc/hosts" > /dev/null
+
+          sudo ln -sf /run/systemd/resolve/stub-resolv.conf "$ROOTFS_DIR/etc/resolv.conf"
+
+          echo "root:1234" | sudo chroot "$ROOTFS_DIR" /usr/sbin/chpasswd
+          sudo chroot "$ROOTFS_DIR" chage -d 0 root
+
+          sudo sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' \
+            "$ROOTFS_DIR/etc/ssh/sshd_config"
+
+          echo "local_enable=YES" | sudo tee -a "$ROOTFS_DIR/etc/vsftpd.conf"
+          echo "write_enable=YES" | sudo tee -a "$ROOTFS_DIR/etc/vsftpd.conf"
+
+          # ★ php8.2 -> php8.4
+          sudo sed -i 's/^;*cgi.fix_pathinfo.*/cgi.fix_pathinfo=1/' \
+            "$ROOTFS_DIR/etc/php/8.4/cgi/php.ini" || true
+
+          # ---------- Plymouth 开机画面（主题 spinner）----------
+          # 这里只写配置、不执行 plymouth-set-default-theme -R：
+          #   rootfs 阶段还没有目标内核，-R 会调用 update-initramfs 而失败。
+          #   真正的 initramfs 在 build-img-*.yml 里用目标内核重建，
+          #   届时 initramfs-tools 的 plymouth hook 会自动把主题打进去。
+          sudo mkdir -p "$ROOTFS_DIR/etc/plymouth"
+          sudo tee "$ROOTFS_DIR/etc/plymouth/plymouthd.conf" > /dev/null <<'EOF'
+          [Daemon]
+          Theme=spinner
+          ShowDelay=0
+          EOF
+          # 同步刷新 plymouth 的默认主题链接（不带 -R，安全）
+          sudo chroot "$ROOTFS_DIR" plymouth-set-default-theme spinner || true
+          echo "----- Plymouth 主题配置 -----"
+          sudo cat "$ROOTFS_DIR/etc/plymouth/plymouthd.conf"
+
+          # ---------- initramfs 固件 hook ----------
+          # 【为什么需要】有线网卡 RTL8111（r8169）的固件需在早期可用，显式打进
+          #   initramfs 以保证早期链路建立。
+          #   注：iwlwifi 已在下方 /etc/modprobe.d/iwlwifi.conf 中被 blacklist，
+          #   其固件不再收入 initramfs（驱动不加载，收了只是无谓增大体积）。
+          sudo mkdir -p "$ROOTFS_DIR/etc/initramfs-tools/hooks"
+          sudo tee "$ROOTFS_DIR/etc/initramfs-tools/hooks/zz-firmware" > /dev/null <<'HOOK'
+          #!/bin/sh
+          set -e
+          PREREQ=""
+          prereqs() { echo "$PREREQ"; }
+          case "$1" in
+            prereqs) prereqs; exit 0 ;;
+          esac
+          if [ -r /usr/share/initramfs-tools/hook-functions ]; then
+            . /usr/share/initramfs-tools/hook-functions
+          fi
+          [ -n "${DESTDIR:-}" ] || { echo "zz-firmware: DESTDIR 未设置，跳过"; exit 0; }
+          mkdir -p "${DESTDIR}/lib/firmware"
+          # 只收 rtl_nic（板载 RTL8111 走 r8169，需要的正是它的固件）。
+          # 不再整份拷贝 rtlwifi（约 15MB，只有 Realtek 无线网卡才用得到，
+          # 而本机用的是 Intel 6205），initramfs 因此明显变小。
+          for d in rtl_nic; do
+            if [ -d "/lib/firmware/$d" ]; then
+              mkdir -p "${DESTDIR}/lib/firmware/$d"
+              cp -a "/lib/firmware/$d/." "${DESTDIR}/lib/firmware/$d/" 2>/dev/null || true
+            fi
+          done
+          # iwlwifi 固件不再收入 initramfs：
+          #   Intel Centrino Advanced-N 6205 已由 /etc/modprobe.d/iwlwifi.conf
+          #   屏蔽（blacklist iwlwifi），驱动不会加载，固件放入 initramfs 纯属
+          #   无谓增大体积，故移除。
+          #   ⚠ 若将来要重新启用无线（删掉 blacklist，并把内核配置里的
+          #     CONFIG_IWLWIFI 恢复为 =m/=y 后重编译），把下面这段加回，让早期的
+          #     固件请求能从 initramfs 得到满足：
+          #   for f in /lib/firmware/iwlwifi-6000g2a-*.ucode; do
+          #     [ -e "$f" ] || continue
+          #     cp -a "$f" "${DESTDIR}/lib/firmware/" 2>/dev/null || true
+          #   done
+          exit 0
+          HOOK
+          sudo chmod 755 "$ROOTFS_DIR/etc/initramfs-tools/hooks/zz-firmware"
+          echo "----- initramfs 固件 hook -----"
+          sudo ls -l "$ROOTFS_DIR/etc/initramfs-tools/hooks/"
+
+          # ---------- GRUB 默认参数 ----------
+          # 写进 rootfs：以后在目标机上跑 update-grub 时也保持同样的开机外观
+          # （与 build-img-*.yml 里手写的 grub.cfg 保持一致）
+          sudo mkdir -p "$ROOTFS_DIR/etc/default"
+          sudo tee "$ROOTFS_DIR/etc/default/grub" > /dev/null <<'EOF'
+          GRUB_DEFAULT=0
+          GRUB_TIMEOUT=5
+          GRUB_DISTRIBUTOR="Debian"
+          GRUB_CMDLINE_LINUX_DEFAULT="quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0 pcie_aspm=off usbcore.autosuspend=-1"
+          GRUB_CMDLINE_LINUX=""
+          GRUB_DISABLE_OS_PROBER=true
+          EOF
+
+          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-networkd || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-networkd-wait-online || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-resolved || true
+          # ★ php8.2-fpm -> php8.4-fpm
+          sudo chroot "$ROOTFS_DIR" systemctl enable nginx php8.4-fpm ssh vsftpd || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable systemd-timesyncd || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable fake-hwclock || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable lyrionmusicserver || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable squeezelite || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable smbd || true
+          sudo chroot "$ROOTFS_DIR" systemctl enable wsdd2 || true
+
+          sudo chroot "$ROOTFS_DIR" netplan generate || true
+
+          sudo chroot "$ROOTFS_DIR" apt-get clean
+          sudo rm -rf "$ROOTFS_DIR/var/lib/apt/lists/"* || true
+
+      - name: Configure audio (squeezelite + HDA no-powersave)
+        run: |
+          set -euo pipefail
+
+          # ---------- 1) 关闭 HDA 省电 ----------
+          # 省电模式开启会导致"刚开始播放的一小段没声或爆音"，这里关掉。
+          # 注意：power_save_node 在新内核中已被删除，写了会被静默忽略并打印
+          #      "unknown parameter 'power_save_node' ignored"，所以只写 power_save=0。
+          sudo mkdir -p "$ROOTFS_DIR/etc/modprobe.d"
+          sudo tee "$ROOTFS_DIR/etc/modprobe.d/audio-disable-powersave.conf" > /dev/null <<'EOF'
+          options snd_hda_intel power_save=0
+          EOF
+
+          # ---------- 2) squeezelite 的 ALSA 输出 ----------
+          # ★ 必须用 plughw，不能用 hw：
+          #   hw:0,0 是硬件直通、不做任何转换，采样率必须与硬件原生完全一致；
+          #   ALC662 模拟输出原生锁定 48000Hz，播放 44.1kHz（CD 与多数无损）时会
+          #   打开失败并反复重开设备，表现为"响一下即中断"。
+          #   plughw 经 ALSA 插件层自动转换采样率与格式，任何采样率都能播。
+          #sudo mkdir -p "$ROOTFS_DIR/etc/default"
+          sudo tee "$ROOTFS_DIR/etc/default/squeezelite" > /dev/null <<'EOF'
+          # Defaults for squeezelite initscript
+          # sourced by /etc/init.d/squeezelite
+          # installed at /etc/default/squeezelite by the maintainer scripts
+
+          # The name for the squeezelite player:
+          SL_NAME="Squeezelite"
+
+          # ALSA output device
+          # 用 plughw（而非 hw）：hw 是硬件直通、不做转换，采样率必须与硬件原生一致，
+          # ALC662 原生仅 48000Hz，播 44.1kHz 会失败中断；plughw 会自动转换采样率。
+          #SL_SOUNDCARD="plughw:0,0"
+          SL_SOUNDCARD="hw:0,0"
+
+          # Squeezebox server (Logitech Media Server):
+          # Uncomment the next line if you want to point squeezelite at the IP address of
+          # your squeezebox server. This is usually unnecessary as the server is
+          # automatically discovered.
+          #SB_SERVER_IP="192.168.x.y"
+
+          # Additional options to pass to squeezelite:
+          #   -p 99            实时优先级
+          #   -r 44100-48000   声明设备支持的采样率范围，避免尝试硬件不支持的值
+          #   -b 2048:3445     官方默认缓冲（不加大，避免延迟升高）
+          # 注意：不要加 -D（DSD 声明），ALC662 不支持 DSD，声明后播 DSD 会无声或出噪声。
+          # Please do not include -z to make squeezelite daemonise itself.
+          SB_EXTRA_ARGS="-p 99 -r 44100-48000 -b 2048:3445"
+          EOF
+
+          echo "----- /etc/default/squeezelite -----"
+          sudo cat "$ROOTFS_DIR/etc/default/squeezelite"
+          echo "----- /etc/modprobe.d/audio-disable-powersave.conf -----"
+          sudo cat "$ROOTFS_DIR/etc/modprobe.d/audio-disable-powersave.conf"
+
+          # ---------- Intel 无线网卡（Centrino Advanced-N 6205）屏蔽 ----------
+          # 【背景】该卡（iwlwifi-6000g2a-*）在 J1800/N3540 等 Bay Trail 平台上
+          # 出现间歇性硬件级故障，失败位置在两种形态间漂移：
+          #   A) 读不到 EEPROM：bad EEPROM/OTP signature / EEPROM_GP=0xffffffff
+          #      / Unable to init EEPROM（寄存器读回全 1，设备在总线上不应答）；
+          #   B) 固件加载成功后跑数秒自崩：Hardware error detected / NMI_INTERRUPT_HOST，
+          #      随后 Failed to load firmware chunk（-110）并 dump 满屏寄存器。
+          # 【已逐一排除】关闭 PCIe ASPM（内核参数 pcie_aspm=off + setpci 复核
+          #   LnkCtl: ASPM Disabled）无效；iwlwifi power_save=0 / 11n_disable=1 无效；
+          #   blacklist intel_ips 无效（本机本就不加载该模块）；固件无新版本可用
+          #   （6000g2a-6.ucode 为官方唯一且末版）。判为该卡与平台的硬件/兼容性问题。
+          # 【处置】本机无线非必需（板载 RTL8111 有线正常），直接屏蔽 iwlwifi：
+          #   启动不再空转重试十余秒，dmesg 不再被寄存器 dump 刷屏。
+          # 【生效范围】blacklist 只对以模块方式构建（=m）的 iwlwifi 生效，即
+          #   -rt-mod 模块化版；全内建版（=y）内核里驱动在启动时即注册，blacklist
+          #   对它无效 —— 该版本靠内核配置里 CONFIG_IWLWIFI=n 实现（已同步改）。
+          # 【如何临时启用】blacklist 只挡自动加载，不挡手动：
+          #   sudo modprobe iwlwifi
+          #   若无接口，再做一次 PCI 复位后重扫：
+          #   echo 1 | sudo tee /sys/bus/pci/devices/0000:02:00.0/remove
+          #   sleep 3 && echo 1 | sudo tee /sys/bus/pci/rescan
+          sudo tee "$ROOTFS_DIR/etc/modprobe.d/iwlwifi.conf" > /dev/null <<'EOF'
+          # Intel Centrino Advanced-N 6205 在本平台存在硬件级间歇故障，
+          # 软件手段（ASPM、驱动省电、intel_ips、换固件）均已排除，故直接屏蔽。
+          # blacklist 只挡自动加载（udev），需要时仍可 `modprobe iwlwifi` 手动加载。
+          blacklist iwlwifi
+          EOF
+          echo "----- /etc/modprobe.d/iwlwifi.conf -----"
+          sudo cat "$ROOTFS_DIR/etc/modprobe.d/iwlwifi.conf"
+
+          # ---------- 3) 断言：防止将来被误改回 hw: 直通 ----------
+          #grep -q '^SL_SOUNDCARD="plughw:' "$ROOTFS_DIR/etc/default/squeezelite" || {
+          #  echo " [FAIL] SL_SOUNDCARD 不是 plughw：hw 直通在采样率不匹配时会中断播放"
+          #  exit 1
+          #}
+          #echo " [OK] SL_SOUNDCARD 使用 plughw（自动采样率转换）"
+          
+          # ---------- 4) 设置LMS plugins ----------
+          sudo mkdir -p "$ROOTFS_DIR/var/lib/squeezeboxserver/cache/InstalledPlugins/Plugins"
+          sudo mkdir -p "$ROOTFS_DIR/var/lib/squeezeboxserver/prefs/plugin"
+          sudo tar zxvfp "${{ github.workspace }}/patch/plugins.tar.gz" -C "$ROOTFS_DIR"
+
+      - name: Package rootfs
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT_DIR"
+          sudo tar --numeric-owner --acls --xattrs -zcf "$OUT_DIR/rootfs.tar.gz" -C "$ROOTFS_DIR" .
+          ls -lh "$OUT_DIR/rootfs.tar.gz"
+
+          ( cd "$OUT_DIR" && sha256sum rootfs.tar.gz > rootfs.tar.gz.sha256 )
+
+          SIZE=$(stat -c%s "$OUT_DIR/rootfs.tar.gz")
+          LIMIT=$((1900 * 1024 * 1024))
+          if [ "$SIZE" -gt "$LIMIT" ]; then
+            cd "$OUT_DIR"
+            split -b 1900m rootfs.tar.gz rootfs.tar.gz.part-
+            rm -f rootfs.tar.gz
+            ls -lh
+          fi
+
+      - name: Verify output files
+        run: |
+          set -euo pipefail
+          ls -lh "$OUT_DIR"
+          test -f "$OUT_DIR/rootfs.tar.gz" || test -f "$OUT_DIR/rootfs.tar.gz.part-aa"
+
+      - name: Create Release and upload
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          replacesArtifacts: true
+          artifactErrorsFailBuild: true
+          tag: rootfs-${{ env.DEBIAN_SUITE }}-latest
+          name: rootfs-${{ env.DEBIAN_SUITE }}-latest
+          artifacts: ${{ env.OUT_DIR }}/*
+          body: |
+            Debian ${{ env.DEBIAN_SUITE }} rootfs (x86_64)
+
+            **🧊 固件信息**
+
+            - ➦ 💻 固件平台：x86-64-linux
+            - ➦ 🚀 内核版本：7.3.3（配合 kernel-image 发布使用）
+            - ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.4-cgi / php8.4-fpm / LMS
+            - ➦ 🔌 网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
+            - ➦ 🧩 initramfs：MODULES=dep + COMPRESS=zstd + FRAMEBUFFER，体积最小、解压最快；固件 hook（zz-firmware）只收 rtl_nic（iwlwifi 已屏蔽，其固件不再入 initramfs）
+            - ➦ 🎨 开机画面：Plymouth（主题 spinner，GRUB 菜单停留 5 秒）
+            - ➦ 🎵 音频：squeezelite 默认 hw:0,0 + HDA 关闭省电（options snd_hda_intel power_save=0），避免响一下就断
+            - ➦ 📶 无线：Intel Centrino Advanced-N 6205 判定为本平台硬件级间歇故障（ASPM 关闭 / 驱动省电 / intel_ips / 换固件均无效），已屏蔽 iwlwifi —— 启动不再空转重试、dmesg 不再被寄存器 dump 刷屏；本机以板载 RTL8111 有线联网（全内建版另将 CONFIG_IWLWIFI 置 n）
+
+            ---
+
+            **初始 root 密码：`1234`**
+            首次通过 SSH 登录会强制要求修改密码；FTP 需在改密后才能登录。
+
+            若下载到的是 rootfs.tar.gz，直接解压：
+              tar -xzf rootfs.tar.gz -C /目标分区
+
+            若下载到的是 rootfs.tar.gz.part-* 分片，先合并再校验：
+              cat rootfs.tar.gz.part-* > rootfs.tar.gz
+              sha256sum -c rootfs.tar.gz.sha256
