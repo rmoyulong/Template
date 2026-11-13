@@ -6,7 +6,7 @@ on:
       kernel_version:
         description: 'Kernel version (must match modules/bzImage)'
         required: false
-        default: '6.12.30-daphile-rebuild'
+        default: '7.3.4'
   push:
     tags:
       - 'img-*'
@@ -16,8 +16,8 @@ permissions:
 
 env:
   # 内核版本必须与本次使用的 modules.tar.gz / bzImage / config 完全一致。
-  KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '6.12.30-daphile-rebuild' }}
-  KERNEL_RELEASE: 6.12.30-daphile-rebuild
+  KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '7.3.4' }}
+  KERNEL_RELEASE: 7.3.4
   # 从 4096 提升到 6144，给 rootfs + 运行期 apt 留足空间，避免写满产生半截缓存
   IMG_SIZE_MB: 6144
   WORK_DIR: ${{ github.workspace }}/work
@@ -182,8 +182,8 @@ jobs:
           mkdir -p /tmp/modules-extract
           sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /tmp/modules-extract
 
-          # 从 modules.tar.gz 读取顶层目录名，并与固定的 6.12.30-daphile-rebuild 核对。
-          KVER=""
+          # 版本号不写死：直接读包内顶层目录名（如 7.3.3-rt）
+          #   若给模块化版单独设了 LOCALVERSION（如 -rt-mod），这里会自动识别
           for d in /tmp/modules-extract/*/; do
             [ -d "$d" ] || continue
             KVER="$(basename "$d")"
@@ -264,10 +264,17 @@ jobs:
           # 假 config 判断不准，所以当时只能退而用 most —— 把 /lib/modules 下
           # 所有模块全塞进 initramfs。J1900 这类机器开机最早期要整体解压它，
           # 这正是"同一台机器启动很慢"的主因。现在改用 build-kernel 的真实配置。
-          # 下载阶段已强制校验；这里使用同一 6.12.30 rebuild Release 的真实 config。
-          sudo cp "$WORK_DIR/config-6.12.30-daphile-rebuild" "/mnt/rootfs/boot/config-$KVER"
-          MODULES_MODE=dep
-          echo "已安装 6.12.30 rebuild config → 采用 MODULES=dep（initramfs 最小化）"
+          if [ -f "$WORK_DIR/config-rt-mod.txt" ]; then
+            sudo cp "$WORK_DIR/config-rt-mod.txt" "/mnt/rootfs/boot/config-$KVER"
+            MODULES_MODE=dep
+            echo "已放入真实内核配置 → 采用 MODULES=dep（initramfs 最小化）"
+          else
+            sudo tee "/mnt/rootfs/boot/config-$KVER" > /dev/null <<'CFGEOF'
+          CONFIG_RD_ZSTD=y
+          CFGEOF
+            MODULES_MODE=most
+            echo "WARN: 未取到真实 config，回退 MODULES=most（initramfs 会偏大）"
+          fi
 
           sudo mkdir -p /mnt/rootfs/etc/initramfs-tools
           # MODULES=dep：只放入挂载根设备真正需要的模块。本内核已把 SATA、USB
