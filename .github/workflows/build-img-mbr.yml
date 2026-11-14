@@ -173,11 +173,11 @@ jobs:
             MODULES_MODE=most
           fi
 
-          sudo tee /mnt/rootfs/etc/initramfs-tools/initramfs.conf > /dev/null <<EOF
+          sudo tee /mnt/rootfs/etc/initramfs-tools/initramfs.conf > /dev/null <<CONFEOF
           MODULES=${MODULES_MODE}
           COMPRESS=zstd
           FRAMEBUFFER=y
-          EOF
+          CONFEOF
 
           sudo chroot /mnt/rootfs /bin/bash -c "depmod -a $KVER"
           sudo chroot /mnt/rootfs /bin/bash -c "update-initramfs -c -k $KVER"
