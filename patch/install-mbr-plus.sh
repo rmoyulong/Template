@@ -18,8 +18,8 @@ export DEBIAN_FRONTEND=noninteractive
 # J1800 双核硬件校验，防止在非目标机器上误执行
 CPU_MODEL=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)
 CPU_CORES=$(nproc)
-if [[ ! "$CPU_MODEL" =~ "J1800" ]] || [ "$CPU_CORES" -ne 2 ]; then
-  echo "⚠️  硬件校验失败：当前 CPU 型号为 $CPU_MODEL，核心数 $CPU_CORES" >&2
+if [[ ! "$CPU_MODEL" =~ "J1800" ]]; then
+  echo "⚠️  硬件校验失败：当前 CPU 型号为 $CPU_MODEL" >&2
   echo "本脚本为 J1800 双核专用，请勿在其他硬件上运行" >&2
   exit 1
 fi

@@ -356,7 +356,7 @@ jobs:
           # 用 plughw（而非 hw）：hw 是硬件直通、不做转换，采样率必须与硬件原生一致，
           # ALC662 原生仅 48000Hz，播 44.1kHz 会失败中断；plughw 会自动转换采样率。
           #SL_SOUNDCARD="plughw:0,0"
-          SL_SOUNDCARD="hw:0,0"
+          SL_SOUNDCARD="hw:1,0"
 
           # Squeezebox server (Logitech Media Server):
           # Uncomment the next line if you want to point squeezelite at the IP address of
