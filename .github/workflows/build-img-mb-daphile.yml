@@ -1,0 +1,303 @@
+name: 编译Bootable IMG (MBR版)-达菲内核
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_version:
+        description: '内核版本 (必须与 modules/bzImage 匹配)'
+        required: false
+        default: '7.3.4'
+  push:
+    tags:
+      - 'img-j1800-mbr-*'
+
+permissions:
+  contents: write
+
+env:
+  KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '7.3.4' }}
+  IMG_SIZE_MB: 6144
+  WORK_DIR: ${{ github.workspace }}/work
+  IMG_FILE: ${{ github.workspace }}/work/debian-rootfs-mbr-daphile.img
+
+  # 下载地址
+  ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-trixie-latest/rootfs.tar.gz
+  MODULES_URL: https://github.com/rmoyulong/Template/releases/download/daphilV/modules.tar.gz
+  CONFIG_URL: https://github.com/rmoyulong/Template/releases/download/kernel-image-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8-%E6%A8%A1%E5%9D%97%E5%8C%96/config-rt-mod.txt
+  BZIMAGE_URL: https://github.com/rmoyulong/Template/releases/download/daphilV/bzImage
+
+jobs:
+  build-img:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget parted e2fsprogs dosfstools mtools xorriso rsync \
+            grub-pc-bin grub-efi-amd64-bin grub-efi-ia32-bin grub-common zstd
+
+      - name: Download rootfs, modules, bzImage
+        run: |
+          set -euo pipefail
+          mkdir -p "$WORK_DIR"
+          cd "$WORK_DIR"
+
+          echo "正在下载组件..."
+          wget -q -O rootfs.tar.gz "$ROOTFS_URL"
+          wget -q -O modules.tar.gz "$MODULES_URL"
+          wget -q -O bzImage "$BZIMAGE_URL"
+
+          if ! file rootfs.tar.gz | grep -q gzip; then echo "ERROR: rootfs invalid"; exit 1; fi
+          if ! file modules.tar.gz | grep -q gzip; then echo "ERROR: modules invalid"; exit 1; fi
+
+          if wget -q -O config-rt-mod.txt "$CONFIG_URL"; then
+            if grep -qE '^CONFIG_RD_(ZSTD|GZIP)=y' config-rt-mod.txt && grep -q '^CONFIG_BLK_DEV_INITRD=y' config-rt-mod.txt; then
+              echo "Config OK"
+            else
+              echo "ERROR: Config invalid"; exit 1
+            fi
+          else
+            echo "ERROR: Config download failed"; exit 1
+          fi
+
+      - name: Create MBR Disk Image
+        run: |
+          cd "$WORK_DIR"
+          dd if=/dev/zero of="$IMG_FILE" bs=1M count=$IMG_SIZE_MB status=progress
+
+          # MBR 分区布局
+          parted -s "$IMG_FILE" mklabel msdos
+          # p1: EFI Partition (200MB) - 用于 UEFI 启动
+          parted -s "$IMG_FILE" mkpart primary fat32 1MiB 201MiB
+          parted -s "$IMG_FILE" set 1 boot on
+          # p2: Root FS (Rest) - 用于存放系统
+          parted -s "$IMG_FILE" mkpart primary ext4 201MiB 100%
+          # 标记根分区为活动，兼容老式 BIOS
+          parted -s "$IMG_FILE" set 2 boot on
+
+          LOOP=$(sudo losetup --find --show --partscan "$IMG_FILE")
+          echo "LOOP=$LOOP" >> "$GITHUB_ENV"
+          sleep 2
+          lsblk "$LOOP"
+
+          sudo mkfs.vfat -F32 "${LOOP}p1"
+          sudo mkfs.ext4 -F -L rootfs "${LOOP}p2"
+
+          ROOTFS_UUID=$(sudo blkid -s UUID -o value "${LOOP}p2")
+          echo "ROOTFS_UUID=$ROOTFS_UUID" >> "$GITHUB_ENV"
+
+      - name: Populate Rootfs
+        run: |
+          set -euo pipefail
+          LOOP="${{ env.LOOP }}"
+          sudo mkdir -p /mnt/rootfs /mnt/efi
+          sudo mount "${LOOP}p2" /mnt/rootfs
+          sudo mount "${LOOP}p1" /mnt/efi
+
+          sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner --acls --xattrs
+          sudo rm -rf /mnt/rootfs/var/lib/apt/lists/* || true
+
+          # 创建挂载点（含 /boot/efi，供后续 bind mount 使用）
+          sudo mkdir -p /mnt/rootfs/mnt/{aliyundrive,boot,rootfs,music,sd,usb,NAS}
+          sudo mkdir -p /mnt/rootfs/boot/efi
+
+          # 复制配置
+          sudo cp ${{ github.workspace }}/patch/smb.conf /mnt/rootfs/etc/samba/smb.conf
+          sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai /mnt/rootfs/etc/localtime
+
+          sudo mkdir -p /mnt/rootfs/etc/default
+          sudo cp ${{ github.workspace }}/patch/locale.conf /mnt/rootfs/etc/default/locale.conf
+          sudo cp ${{ github.workspace }}/patch/locale.gen /mnt/rootfs/etc/locale.gen
+
+          sudo cp ${{ github.workspace }}/patch/resize_rootfs.sh /mnt/rootfs/root/resize_rootfs.sh
+          sudo chmod 755 /mnt/rootfs/root/resize_rootfs.sh
+          sudo cp ${{ github.workspace }}/patch/.bashrc /mnt/rootfs/root/.bashrc
+          sudo chmod 0644 /mnt/rootfs/root/.bashrc
+
+          # 复制 MBR 专用安装脚本
+          sudo mkdir -p /mnt/rootfs/root
+          sudo chmod 700 /mnt/rootfs/root
+          for pair in \
+            "${{ github.workspace }}/patch/install-mbr.sh:/mnt/rootfs/root/install.sh" \
+            "${{ github.workspace }}/patch/install-mbr-plus.sh:/mnt/rootfs/root/install-plus.sh"; do
+            src="${pair%%:*}"; dst="${pair##*:}"
+            if [ -f "$src" ]; then
+              sudo cp "$src" "$dst"
+              sudo chmod 755 "$dst"
+              sudo sed -i 's/\r$//' "$dst"
+            fi
+          done
+
+          # 处理内核
+          rm -rf /tmp/modules-extract
+          mkdir -p /tmp/modules-extract
+          sudo tar -xzf "$WORK_DIR/modules.tar.gz" -C /tmp/modules-extract
+
+          KVER=""
+          for d in /tmp/modules-extract/*/; do
+            [ -d "$d" ] || continue
+            KVER="$(basename "$d")"
+            break
+          done
+          echo "KVER=$KVER" >> "$GITHUB_ENV"
+
+          sudo mkdir -p /mnt/rootfs/lib/modules
+          sudo mv "/tmp/modules-extract/$KVER" "/mnt/rootfs/lib/modules/$KVER"
+          sudo mkdir -p /mnt/rootfs/boot
+          sudo cp "$WORK_DIR/bzImage" "/mnt/rootfs/boot/vmlinuz-$KVER"
+
+      - name: Generate Initramfs & Install GRUB (J1800 Params)
+        run: |
+          LOOP="${{ env.LOOP }}"
+          ROOTFS_UUID="${{ env.ROOTFS_UUID }}"
+          KVER="${{ env.KVER }}"
+
+          # 防御性创建所有 bind mount 目标，避免 mount point does not exist
+          sudo mkdir -p /mnt/rootfs/dev /mnt/rootfs/proc /mnt/rootfs/sys /mnt/rootfs/boot/efi
+          sudo mount --bind /dev /mnt/rootfs/dev
+          sudo mount --bind /proc /mnt/rootfs/proc
+          sudo mount --bind /sys /mnt/rootfs/sys
+          sudo mount --bind /mnt/efi /mnt/rootfs/boot/efi
+
+          if [ -f "$WORK_DIR/config-rt-mod.txt" ]; then
+            sudo cp "$WORK_DIR/config-rt-mod.txt" "/mnt/rootfs/boot/config-$KVER"
+            MODULES_MODE=dep
+          else
+            MODULES_MODE=most
+          fi
+
+          sudo tee /mnt/rootfs/etc/initramfs-tools/initramfs.conf > /dev/null <<CONFEOF
+          MODULES=${MODULES_MODE}
+          COMPRESS=zstd
+          FRAMEBUFFER=y
+          CONFEOF
+
+          sudo chroot /mnt/rootfs /bin/bash -c "depmod -a $KVER"
+          sudo chroot /mnt/rootfs /bin/bash -c "update-initramfs -c -k $KVER"
+
+          sudo tee /mnt/rootfs/etc/fstab > /dev/null <<EOF
+          LABEL=rootfs  /  ext4  errors=remount-ro  0  1
+          UUID=${ROOTFS_UUID}  /  ext4  errors=remount-ro  0  1
+          EOF
+
+                    # 基础工具（不含任何 grub-* 包）
+          sudo chroot /mnt/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+            bash -c 'apt-get update && apt-get install -y --no-install-recommends \
+              parted dosfstools e2fsprogs rsync \
+              fake-hwclock systemd-timesyncd usbutils pciutils evtest kbd zstd'
+
+          sudo chroot /mnt/rootfs systemctl enable systemd-timesyncd || true
+          sudo chroot /mnt/rootfs systemctl enable fake-hwclock || true
+
+          # ---- GRUB BIOS (i386-pc) ----
+          sudo chroot /mnt/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+            bash -c 'apt-get install -y --no-install-recommends grub-pc'
+          sudo chroot /mnt/rootfs /bin/bash -c "grub-install --target=i386-pc --recheck --force ${LOOP}"
+          sudo chroot /mnt/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+            bash -c 'apt-get purge -y grub-pc'
+
+          # ---- GRUB UEFI x86_64 ----
+          sudo chroot /mnt/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+            bash -c 'apt-get install -y --no-install-recommends grub-efi-amd64'
+          sudo chroot /mnt/rootfs /bin/bash -c "grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck"
+          sudo chroot /mnt/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+            bash -c 'apt-get purge -y grub-efi-amd64'
+
+          # ---- GRUB UEFI IA32 ----
+          sudo chroot /mnt/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+            bash -c 'apt-get install -y --no-install-recommends grub-efi-ia32'
+          sudo chroot /mnt/rootfs /bin/bash -c "grub-install --target=i386-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck"
+          sudo chroot /mnt/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+            bash -c 'apt-get purge -y grub-efi-ia32'
+
+          sudo chroot /mnt/rootfs systemctl enable systemd-timesyncd || true
+          sudo chroot /mnt/rootfs systemctl enable fake-hwclock || true
+
+          # 安装 GRUB (BIOS + UEFI x64 + UEFI IA32)
+          sudo chroot /mnt/rootfs /bin/bash -c "
+            grub-install --target=i386-pc --recheck --force ${LOOP}
+            grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck
+            grub-install --target=i386-efi  --efi-directory=/boot/efi --bootloader-id=debian --recheck
+          "
+
+          # J1800 专用启动参数：隔离 CPU 1 (双核仅留 CPU0 给系统)
+          sudo tee /mnt/rootfs/boot/grub/grub.cfg > /dev/null <<EOF
+          set default=0
+          set timeout=5
+          insmod all_video
+          set gfxmode=auto
+          set gfxpayload=keep
+
+          menuentry "Debian ${KVER} (J1800 RT)" {
+              linux /boot/vmlinuz-${KVER} root=UUID=${ROOTFS_UUID} rw quiet splash vt.global_cursor_default=0 pcie_aspm=off intel_idle.max_cstate=1 isolcpus=1 nohz_full=1 rcu_nocbs=1 irqaffinity=0 tsc=reliable
+              initrd /boot/initrd.img-${KVER}
+          }
+
+          menuentry "Debian ${KVER} (Recovery)" {
+              linux /boot/vmlinuz-${KVER} root=UUID=${ROOTFS_UUID} rw single console=tty1
+              initrd /boot/initrd.img-${KVER}
+          }
+          EOF
+
+          sudo mkdir -p /mnt/efi/EFI/debian
+          sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/efi/EFI/debian/grub.cfg
+          sudo mkdir -p /mnt/efi/EFI/BOOT
+          sudo cp /mnt/rootfs/boot/grub/grub.cfg /mnt/efi/EFI/BOOT/grub.cfg
+
+          if [ -f /mnt/efi/EFI/debian/grubia32.efi ]; then
+            sudo cp /mnt/efi/EFI/debian/grubia32.efi /mnt/efi/EFI/BOOT/BOOTIA32.EFI
+          fi
+          if [ -f /mnt/efi/EFI/debian/grubx64.efi ]; then
+            sudo cp /mnt/efi/EFI/debian/grubx64.efi /mnt/efi/EFI/BOOT/BOOTX64.EFI
+          fi
+
+          sudo umount /mnt/rootfs/boot/efi || true
+          sudo umount /mnt/rootfs/dev || true
+          sudo umount /mnt/rootfs/proc || true
+          sudo umount /mnt/rootfs/sys || true
+
+      - name: Cleanup and Compress
+        run: |
+          LOOP="${{ env.LOOP }}"
+          sudo umount /mnt/rootfs || true
+          sudo umount /mnt/efi || true
+          sudo losetup -d "$LOOP" || true
+          sudo e2fsck -f -p -v "${LOOP}p2" || true
+
+          cd "$WORK_DIR"
+          gzip -9 -k "$IMG_FILE"
+          sha256sum debian-rootfs-mbr-daphile.img.gz > debian-rootfs-mbr-daphile.img.gz.sha256
+          ls -lh
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: daphilV
+          name: 保留达菲的bzImage和modules
+          allowUpdates: true
+          replacesArtifacts: true
+          artifacts: |
+            ${{ env.WORK_DIR }}/debian-rootfs-mbr-daphile.img.gz
+            ${{ env.WORK_DIR }}/debian-rootfs-mbr-daphile.img.gz.sha256
+          body: |
+            &zwnj;**达菲的内核和modules，用于学习和私人使用的LMS Server镜像**&zwnj;
+
+            &zwnj;**硬件适配**&zwnj;: Intel Celeron J1800 (2核)
+            &zwnj;**分区格式**&zwnj;: MBR (兼容性最佳)
+            &zwnj;**内核参数**&zwnj;:
+            - `isolcpus=1`: 隔离第二个核心用于实时音频
+            - `irqaffinity=0`: 中断强制在 CPU0
+
+            &zwnj;**安装**&zwnj;:
+            1. 写入 U 盘/硬盘
+            2. 启动后运行 `sudo sh /root/install.sh`
