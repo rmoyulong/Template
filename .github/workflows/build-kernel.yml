@@ -7,7 +7,11 @@ on:
         description: '容错模式：配置降级（=m 非 0 / 品牌 HID 缺失）时只告警不失败'
         type: boolean
         default: false
-
+  push:
+    paths:
+      - ".github/workflows/build-kernel.yml"
+      - "patch/j1900andj1800-RT-modular.config"
+      - "patch/j1900andj1800-RT.config"
 env:
   KERNEL_VERSION: 7.3.4
 
