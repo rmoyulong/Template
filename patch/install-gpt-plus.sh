@@ -1,19 +1,29 @@
 #!/bin/bash
-# install-gpt-plus.sh —— 把 /root/rootfs.tar.gz 安装到目标内部硬盘（GPT 分区表）
-# 分区对齐 build-img-gpt.yml：gpt 分区表，p1 bios_boot 2MiB(bios_grub)，p2 EFI 100MiB(esp)，p3 EXT4 剩余
+# install-gpt-plus.sh —— 【J1900 四核专用】 把 /root/rootfs.tar.gz 安装到目标内部硬盘（GPT 分区表）
+# 分区对齐 build-img-gpt.yml：gpt 分区表，p1 BIOS boot 2MiB(bios_grub)，p2 FAT32 200MiB(esp)，p3 EXT4 剩余
 # rootfs 来源：/root/rootfs.tar.gz（可用第 1 个参数或环境变量 ROOTFS_TARBALL 指定）
 # 内核与 modules 来源：当前运行的 U 盘系统（/boot、/lib/modules），不使用 tar 内的
-# 三路 GRUB：BIOS(i386-pc) + 64 位 UEFI + 32 位 UEFI（兼容 J1800 这类 32 位 UEFI 老机器）
+# 三路 GRUB：BIOS(i386-pc) + 64 位 UEFI + 32 位 UEFI（兼容老机器）
+# 专属启动参数：isolcpus=1-3 隔离 CPU1-3，专为 J1900 四核实时音频优化
 set -euo pipefail
 
 # ---------- 0. 前置检查 ----------
 if [ "$(id -u)" -ne 0 ]; then
   echo "请用 root 运行：sudo $0" >&2
-  echo "Please run with root privileges: sudo $0" >&2
   exit 1
 fi
 
 export DEBIAN_FRONTEND=noninteractive
+
+# J1900 四核硬件校验，防止在非目标机器上误执行
+CPU_MODEL=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)
+CPU_CORES=$(nproc)
+if [[ ! "$CPU_MODEL" =~ "J1900" ]] || [ "$CPU_CORES" -ne 4 ]; then
+  echo "⚠️  硬件校验失败：当前 CPU 型号为 $CPU_MODEL，核心数 $CPU_CORES" >&2
+  echo "本脚本为 J1900 四核专用，请勿在其他硬件上运行" >&2
+  exit 1
+fi
+echo "✅ 硬件校验通过：检测到 Intel Celeron J1900（四核），继续执行安装"
 
 # rootfs 压缩包：命令行参数 > 环境变量 > 常见位置自动查找
 ROOTFS_TARBALL="${1:-${ROOTFS_TARBALL:-}}"
@@ -27,22 +37,20 @@ if [ -z "$ROOTFS_TARBALL" ]; then
 fi
 
 if [ -z "$ROOTFS_TARBALL" ] || [ ! -f "$ROOTFS_TARBALL" ]; then
-  echo "找不到 rootfs 压缩包。Could not find the rootfs archive." >&2
-  echo "请把它放到 /root/rootfs.tar.gz，或显式指定路径：" >&2  
-  echo "Please place it at /root/rootfs.tar.gz, or explicitly specify the path:" >&2
+  echo "找不到 rootfs 压缩包。" >&2
+  echo "请把它放到 /root/rootfs.tar.gz，或显式指定路径：" >&2
   echo "  $0 /path/to/rootfs.tar.gz" >&2
   exit 1
 fi
 
 # 校验确实是可读的 gzip tar，避免解压到一半才发现文件坏了（大包会需要几十秒）
-echo "正在校验 rootfs 压缩包完整性...Verifying the integrity of the rootfs archive..."
+echo "正在校验 rootfs 压缩包完整性..."
 if ! tar -tzf "$ROOTFS_TARBALL" >/dev/null 2>&1; then
   echo "rootfs 压缩包无法读取（不是有效的 tar.gz？）：$ROOTFS_TARBALL" >&2
-  echo "rootfs The archive cannot be read (is it not a valid tar.gz file?)：$ROOTFS_TARBALL" >&2
   exit 1
 fi
 
-echo "rootfs 压缩包（Compressed archive）：$ROOTFS_TARBALL ($(du -h "$ROOTFS_TARBALL" | cut -f1))"
+echo "rootfs 压缩包：$ROOTFS_TARBALL ($(du -h "$ROOTFS_TARBALL" | cut -f1))"
 
 # 依赖自检（缺则自动安装）
 MISSING=()
@@ -51,7 +59,6 @@ for cmd in parted partprobe mkfs.ext4 mkfs.vfat blkid tar grub-install; do
 done
 if [ ${#MISSING[@]} -gt 0 ]; then
   echo "缺少命令: ${MISSING[*]}，尝试自动安装..."
-  echo "Missing commands: ${MISSING[*]}; attempting automatic installation..."
   apt-get update
   apt-get install -y --no-install-recommends \
     parted dosfstools e2fsprogs tar \
@@ -59,7 +66,6 @@ if [ ${#MISSING[@]} -gt 0 ]; then
   for cmd in "${MISSING[@]}"; do
     command -v "$cmd" >/dev/null 2>&1 || {
       echo "仍然缺少: $cmd，请检查网络/软件源" >&2
-	  echo "Still missing: $cmd; please check your network or software sources." >&2
       exit 1
     }
   done
@@ -68,7 +74,6 @@ fi
 # 校验源系统内核存在（rootfs 不含内核，必须从当前系统补入）
 if ! ls /boot/vmlinuz-* >/dev/null 2>&1 && [ ! -f /boot/bzImage ]; then
   echo "当前系统 /boot 下既没有 vmlinuz-* 也没有 bzImage，无法补入内核" >&2
-  echo "There are neither vmlinuz-* nor bzImage files under /boot in the current system, making it impossible to add a kernel." >&2
   exit 1
 fi
 
@@ -81,7 +86,6 @@ else
 fi
 ROOT_DISK="/dev/$ROOT_DISK_NAME"
 echo "当前系统所在盘（将被排除）：$ROOT_DISK"
-echo "The drive containing the current system (will be excluded)：$ROOT_DISK"
 
 # ---------- 2. 列出其他候选硬盘 ----------
 mapfile -t CANDIDATES < <(lsblk -dno NAME,TYPE | awk '$2=="disk" {print $1}')
@@ -93,46 +97,41 @@ for d in "${CANDIDATES[@]}"; do
 done
 if [ ${#TARGETS[@]} -eq 0 ]; then
   echo "没有找到可安装的目标硬盘（已排除当前盘 $ROOT_DISK）" >&2
-  echo "No target hard drive available for installation (current drive excluded $ROOT_DISK）" >&2
   exit 1
 fi
 
 echo
 echo "可安装的目标硬盘："
-echo "Target hard drive available for installation："
 for i in "${!TARGETS[@]}"; do
   dev="${TARGETS[$i]}"
   info=$(lsblk -dno SIZE,MODEL "$dev" 2>/dev/null || echo "")
   echo " [$i] $dev $info"
 done
-echo "Please select the target hard drive number (enter q to exit):"
 read -rp "请选择目标硬盘编号（输入 q 退出）: " choice
 [ "$choice" = "q" ] && exit 0
 if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -ge ${#TARGETS[@]} ]; then
   echo "无效选择" >&2
-  echo "Invalid Choice" >&2; exit 1
+  exit 1
 fi
 TARGET="${TARGETS[$choice]}"
 echo "目标盘：$TARGET"
-echo "Target Disk：$TARGET"
 
-echo "Warning: All data on $TARGET will be erased. Confirm to continue? (yes/no):"
 read -rp "警告：$TARGET 上的所有数据将被清空，确认继续？(yes/no): " confirm
-[ "$confirm" = "yes" ] || { echo "已取消（Cancelled）"; exit 0; }
+[ "$confirm" = "yes" ] || { echo "已取消"; exit 0; }
 
 # ---------- 3. 卸载目标盘上已挂载的分区 ----------
 for p in $(lsblk -lno NAME "$TARGET" 2>/dev/null | tail -n +2); do
   umount "/dev/$p" 2>/dev/null || true
 done
 
-# ---------- 4. 分区：gpt + p1 bios_boot 2MiB + p2 EFI 100MiB(esp) + p3 root 剩余 ----------
+# ---------- 4. 分区：gpt + p1 BIOS boot 2MiB(bios_grub) + p2 FAT32 200MiB(esp) + p3 EXT4 剩余 ----------
 echo "正在分区：$TARGET"
 parted -s "$TARGET" mklabel gpt
-parted -s "$TARGET" mkpart biosboot 1MiB 3MiB
+parted -s "$TARGET" mkpart primary 1MiB 3MiB
 parted -s "$TARGET" set 1 bios_grub on
-parted -s "$TARGET" mkpart efi fat32 3MiB 103MiB
+parted -s "$TARGET" mkpart primary fat32 3MiB 203MiB
 parted -s "$TARGET" set 2 esp on
-parted -s "$TARGET" mkpart root ext4 103MiB 100%
+parted -s "$TARGET" mkpart primary ext4 203MiB 100%
 partprobe "$TARGET"
 
 # 等待分区节点出现（兼容 NVMe: nvme0n1p1 和 sdX: sda1 两种命名）
@@ -145,7 +144,8 @@ else
   P2="${TARGET}2"
   P3="${TARGET}3"
 fi
-for i in 1 2 3 4 5; do
+# 延长等待超时，兼容低速老硬盘
+for i in 1 2 3 4 5 6 7 8 9 10; do
   sleep 1
   [ -b "$P1" ] && [ -b "$P2" ] && [ -b "$P3" ] && break
 done
@@ -163,10 +163,9 @@ echo "根分区 UUID: $ROOT_UUID"
 mkdir -p /mnt/target
 mount "$P3" /mnt/target
 
-#/mnt子目录
-sudo mkdir -p /mnt/target/mnt/aliyundrive /mnt/target/mnt/boot /mnt/target/mnt/rootfs /mnt/target/mnt/music
-sudo mkdir -p /mnt/target/mnt/sd /mnt/target/mnt/usb /mnt/target/mnt/NAS 
-
+# 创建常用挂载点
+mkdir -p /mnt/target/mnt/aliyundrive /mnt/target/mnt/boot /mnt/target/mnt/rootfs /mnt/target/mnt/music
+mkdir -p /mnt/target/mnt/sd /mnt/target/mnt/usb /mnt/target/mnt/NAS
 
 echo "解压 rootfs 到目标盘（文件较大，请耐心等待）..."
 # --xattrs --acls 必须与打包端（build-rootfs.yml: tar --acls --xattrs）对应；
@@ -235,6 +234,7 @@ export DEBIAN_FRONTEND=noninteractive
 export DEBCONF_NONINTERACTIVE_SEEN=true
 # 目标 rootfs 若仍缺 32 位 EFI 模块，尝试联网补齐（离线时忽略即可，上面已从源系统复制）
 [ -d /usr/lib/grub/i386-efi ] || (apt-get update && apt-get install -y --no-install-recommends grub-efi-ia32-bin) || true
+# GPT 磁盘上 i386-pc 依赖 bios_grub 分区，grub-install 会自动写入该分区
 grub-install --target=i386-pc --recheck --force '$TARGET' || echo '[warn] i386-pc 安装失败'
 grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || echo '[warn] x86_64-efi 安装失败'
 grub-install --target=i386-efi  --efi-directory=/boot/efi --bootloader-id=debian --recheck || echo '[warn] i386-efi 安装失败'
@@ -278,7 +278,7 @@ grep -E "^(MODULES|COMPRESS|FRAMEBUFFER)=" "$CONF" || true
 echo "重建 initramfs..."
 chroot /mnt/target /bin/bash -c "update-initramfs -u -k all 2>/dev/null || true"
 
-# ---------- 7. 写 grub.cfg（LABEL + UUID 双根参数，与 CI 对齐） ----------
+# ---------- 7. 写 grub.cfg（LABEL + UUID 双根参数，J1900 四核专属启动配置） ----------
 KVER=$(ls /mnt/target/boot/vmlinuz-* 2>/dev/null | head -1 | sed 's|.*/vmlinuz-||')
 if [ -z "$KVER" ]; then
   echo "未找到内核镜像" >&2; exit 1
@@ -292,12 +292,12 @@ insmod all_video
 set gfxmode=auto
 set gfxpayload=keep
 
-menuentry "Debian ${KVER}" {
-    linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0 pcie_aspm=off usbcore.autosuspend=-1
+menuentry "Debian ${KVER} (J1900 RT 四核实时)" {
+    linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw quiet splash vt.global_cursor_default=0 pcie_aspm=off intel_idle.max_cstate=1 isolcpus=1-3 nohz_full=1-3 rcu_nocbs=1-3 irqaffinity=0 tsc=reliable
     initrd /boot/initrd.img-${KVER}
 }
 
-menuentry "Debian ${KVER} (recovery)" {
+menuentry "Debian ${KVER} (recovery 恢复模式)" {
     linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw single console=tty1
     initrd /boot/initrd.img-${KVER}
 }
@@ -328,13 +328,14 @@ umount /mnt/target/boot/efi 2>/dev/null || true
 umount /mnt/target 2>/dev/null || true
 
 echo
-echo "安装完成（GPT 分区表）。"
+echo "安装完成（GPT 分区表，J1900 四核专属配置）。"
 echo "  rootfs 来源: $ROOTFS_TARBALL"
 echo "  目标盘    : $TARGET"
-echo "  p1        : BIOS boot 2MiB"
-echo "  p2        : EFI FAT32 100MiB"
+echo "  p1        : BIOS boot 2MiB (bios_grub) → 供 BIOS 引导嵌入 core.img"
+echo "  p2        : FAT32 200MiB (esp) → 用于 EFI 引导文件"
 echo "  p3        : EXT4 rootfs → LABEL=rootfs UUID=$ROOT_UUID"
 echo "  内核/模块 : 来自当前启动系统（$KVER）"
+echo "  启动参数  : isolcpus=1-3 隔离 CPU1-3，专为 J1900 四核实时音频优化"
 echo
 echo "请拔掉当前启动介质，从 $TARGET 启动。"
 echo "（老机器请在 BIOS 中设置 XHCI Hand-off=Disabled、EHCI Hand-off=Enabled）"

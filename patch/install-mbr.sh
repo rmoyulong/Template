@@ -1,19 +1,29 @@
 #!/bin/bash
-# install-mbr.sh —— 把当前运行系统（U 盘系统）整机安装到目标内部硬盘（MBR 分区表）
+# install-mbr.sh —— 【J1800 双核专用】 把当前运行系统（U 盘系统）整机安装到目标内部硬盘（MBR 分区表）
 # 分区对齐 build-img-mbr.yml：msdos 分区表，p1 FAT32 200MiB(boot on)，p2 EXT4 剩余
 # rootfs 来源：当前运行的 U 盘系统（rsync 同步 /）
 # 内核与 modules 来源：当前运行的 U 盘系统（/boot 的内核镜像、/lib/modules）
-# 三路 GRUB：BIOS(i386-pc) + 64 位 UEFI + 32 位 UEFI（兼容 J1800 这类 32 位 UEFI 老机器）
+# 三路 GRUB：BIOS(i386-pc) + 64 位 UEFI + 32 位 UEFI（完美兼容 J1800 老主板的 32 位 UEFI）
+# 专属启动参数：isolcpus=1 隔离 CPU1，专为 J1800 双核实时音频优化
 set -euo pipefail
 
 # ---------- 0. 前置检查 ----------
 if [ "$(id -u)" -ne 0 ]; then
   echo "请用 root 运行：sudo $0" >&2
-  echo "Please run with root privileges: sudo $0" >&2
   exit 1
 fi
 
 export DEBIAN_FRONTEND=noninteractive
+
+# J1800 双核硬件校验，防止在非目标机器上误执行
+CPU_MODEL=$(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs)
+CPU_CORES=$(nproc)
+if [[ ! "$CPU_MODEL" =~ "J1800" ]] || [ "$CPU_CORES" -ne 2 ]; then
+  echo "⚠️  硬件校验失败：当前 CPU 型号为 $CPU_MODEL，核心数 $CPU_CORES" >&2
+  echo "本脚本为 J1800 双核专用，请勿在其他硬件上运行" >&2
+  exit 1
+fi
+echo "✅ 硬件校验通过：检测到 Intel Celeron J1800（双核），继续执行安装"
 
 # 依赖自检（缺则自动安装）
 MISSING=()
@@ -22,7 +32,6 @@ for cmd in parted partprobe mkfs.ext4 mkfs.vfat blkid rsync grub-install; do
 done
 if [ ${#MISSING[@]} -gt 0 ]; then
   echo "缺少命令: ${MISSING[*]}，尝试自动安装..."
-  echo "Missing commands: ${MISSING[*]}; attempting automatic installation..."
   apt-get update
   apt-get install -y --no-install-recommends \
     parted dosfstools e2fsprogs rsync \
@@ -30,7 +39,6 @@ if [ ${#MISSING[@]} -gt 0 ]; then
   for cmd in "${MISSING[@]}"; do
     command -v "$cmd" >/dev/null 2>&1 || {
       echo "仍然缺少: $cmd，请检查网络/软件源" >&2
-	  echo "Still missing: $cmd; please check your network or software sources." >&2
       exit 1
     }
   done
@@ -39,7 +47,6 @@ fi
 # 校验源系统内核存在（rootfs 不含内核，必须从当前系统补入）
 if ! ls /boot/vmlinuz-* >/dev/null 2>&1 && [ ! -f /boot/bzImage ]; then
   echo "当前系统 /boot 下既没有 vmlinuz-* 也没有 bzImage，无法补入内核" >&2
-  echo "There are neither vmlinuz-* nor bzImage files under /boot in the current system, making it impossible to add a kernel." >&2
   exit 1
 fi
 
@@ -52,7 +59,6 @@ else
 fi
 ROOT_DISK="/dev/$ROOT_DISK_NAME"
 echo "当前系统所在盘（将被排除）：$ROOT_DISK"
-echo "The drive containing the current system (will be excluded)：$ROOT_DISK"
 
 # ---------- 2. 列出其他候选硬盘 ----------
 mapfile -t CANDIDATES < <(lsblk -dno NAME,TYPE | awk '$2=="disk" {print $1}')
@@ -64,32 +70,27 @@ for d in "${CANDIDATES[@]}"; do
 done
 if [ ${#TARGETS[@]} -eq 0 ]; then
   echo "没有找到可安装的目标硬盘（已排除当前盘 $ROOT_DISK）" >&2
-  echo "No target hard drive available for installation (current drive excluded $ROOT_DISK）" >&2
   exit 1
 fi
 
 echo
 echo "可安装的目标硬盘："
-echo "Target hard drive available for installation："
 for i in "${!TARGETS[@]}"; do
   dev="${TARGETS[$i]}"
   info=$(lsblk -dno SIZE,MODEL "$dev" 2>/dev/null || echo "")
   echo " [$i] $dev $info"
 done
-echo "Please select the target hard drive number (enter q to exit):"
 read -rp "请选择目标硬盘编号（输入 q 退出）: " choice
 [ "$choice" = "q" ] && exit 0
 if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -ge ${#TARGETS[@]} ]; then
   echo "无效选择" >&2
-  echo "Invalid Choice" >&2; exit 1
+  exit 1
 fi
 TARGET="${TARGETS[$choice]}"
 echo "目标盘：$TARGET"
-echo "Target Disk：$TARGET"
 
-echo "Warning: All data on $TARGET will be erased. Confirm to continue? (yes/no):"
 read -rp "警告：$TARGET 上的所有数据将被清空，确认继续？(yes/no): " confirm
-[ "$confirm" = "yes" ] || { echo "已取消（Cancelled）"; exit 0; }
+[ "$confirm" = "yes" ] || { echo "已取消"; exit 0; }
 
 # ---------- 3. 卸载目标盘上已挂载的分区 ----------
 for p in $(lsblk -lno NAME "$TARGET" 2>/dev/null | tail -n +2); do
@@ -112,7 +113,8 @@ else
   P1="${TARGET}1"
   P2="${TARGET}2"
 fi
-for i in 1 2 3 4 5; do
+# 延长等待超时，兼容 J1800 平台的低速老硬盘
+for i in 1 2 3 4 5 6 7 8 9 10; do
   sleep 1
   [ -b "$P1" ] && [ -b "$P2" ] && break
 done
@@ -130,10 +132,9 @@ echo "根分区 UUID: $ROOT_UUID"
 mkdir -p /mnt/target
 mount "$P2" /mnt/target
 
-#/mnt子目录
-sudo mkdir -p /mnt/target/mnt/aliyundrive /mnt/target/mnt/boot /mnt/target/mnt/rootfs /mnt/target/mnt/music
-sudo mkdir -p /mnt/target/mnt/sd /mnt/target/mnt/usb /mnt/target/mnt/NAS 
-
+# 创建常用挂载点
+mkdir -p /mnt/target/mnt/aliyundrive /mnt/target/mnt/boot /mnt/target/mnt/rootfs /mnt/target/mnt/music
+mkdir -p /mnt/target/mnt/sd /mnt/target/mnt/usb /mnt/target/mnt/NAS
 
 echo "同步当前系统到目标盘（文件较多，请耐心等待）..."
 # -x：不跨文件系统（EFI 挂载点等自动跳过）
@@ -247,7 +248,7 @@ grep -E "^(MODULES|COMPRESS|FRAMEBUFFER)=" "$CONF" || true
 echo "重建 initramfs..."
 chroot /mnt/target /bin/bash -c "update-initramfs -u -k all 2>/dev/null || true"
 
-# ---------- 7. 写 grub.cfg（LABEL + UUID 双根参数，与 CI 对齐） ----------
+# ---------- 7. 写 grub.cfg（LABEL + UUID 双根参数，J1800 双核专属启动配置） ----------
 KVER=$(ls /mnt/target/boot/vmlinuz-* 2>/dev/null | head -1 | sed 's|.*/vmlinuz-||')
 if [ -z "$KVER" ]; then
   echo "未找到内核镜像" >&2; exit 1
@@ -261,12 +262,12 @@ insmod all_video
 set gfxmode=auto
 set gfxpayload=keep
 
-menuentry "Debian ${KVER}" {
-    linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw quiet splash loglevel=3 console=tty1 vt.global_cursor_default=0 pcie_aspm=off usbcore.autosuspend=-1
+menuentry "Debian ${KVER} (J1800 RT 双核实时)" {
+    linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw quiet splash vt.global_cursor_default=0 pcie_aspm=off intel_idle.max_cstate=1 isolcpus=1 nohz_full=1 rcu_nocbs=1 irqaffinity=0 tsc=reliable
     initrd /boot/initrd.img-${KVER}
 }
 
-menuentry "Debian ${KVER} (recovery)" {
+menuentry "Debian ${KVER} (recovery 恢复模式)" {
     linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw single console=tty1
     initrd /boot/initrd.img-${KVER}
 }
@@ -297,12 +298,13 @@ umount /mnt/target/boot/efi 2>/dev/null || true
 umount /mnt/target 2>/dev/null || true
 
 echo
-echo "安装完成（MBR/msdos 分区表）。"
+echo "安装完成（MBR 分区表，J1800 双核专属配置）。"
 echo "  rootfs 来源: 当前运行系统（rsync 同步）"
 echo "  目标盘    : $TARGET"
 echo "  p1        : FAT32 200MiB (boot) → 用于 EFI 引导文件"
 echo "  p2        : EXT4 rootfs → LABEL=rootfs UUID=$ROOT_UUID"
 echo "  内核/模块 : 来自当前启动系统（$KVER）"
+echo "  启动参数  : isolcpus=1 隔离 CPU1，专为 J1800 双核实时音频优化"
 echo
 echo "请拔掉当前启动介质，从 $TARGET 启动。"
 echo "（老机器请在 BIOS 中设置 XHCI Hand-off=Disabled、EHCI Hand-off=Enabled）"
