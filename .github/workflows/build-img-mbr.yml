@@ -19,7 +19,7 @@ env:
   IMG_SIZE_MB: 6144
   WORK_DIR: ${{ github.workspace }}/work
   IMG_FILE: ${{ github.workspace }}/work/debian-rootfs-mbr-j1800.img
-  
+
   # 下载地址
   ROOTFS_URL: https://github.com/rmoyulong/Template/releases/download/rootfs-trixie-latest/rootfs.tar.gz
   MODULES_URL: https://github.com/rmoyulong/Template/releases/download/kernel-modules-RT%E5%AE%9E%E6%97%B6%E5%86%85%E6%A0%B8-%E6%A8%A1%E5%9D%97%E5%8C%96/modules.tar.gz
@@ -51,7 +51,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$WORK_DIR"
           cd "$WORK_DIR"
-          
+
           echo "正在下载组件..."
           wget -q -O rootfs.tar.gz "$ROOTFS_URL"
           wget -q -O modules.tar.gz "$MODULES_URL"
@@ -107,22 +107,23 @@ jobs:
           sudo tar -xzf "$WORK_DIR/rootfs.tar.gz" -C /mnt/rootfs --numeric-owner --acls --xattrs
           sudo rm -rf /mnt/rootfs/var/lib/apt/lists/* || true
 
-          # 创建挂载点
+          # 创建挂载点（含 /boot/efi，供后续 bind mount 使用）
           sudo mkdir -p /mnt/rootfs/mnt/{aliyundrive,boot,rootfs,music,sd,usb,NAS}
+          sudo mkdir -p /mnt/rootfs/boot/efi
 
           # 复制配置
           sudo cp ${{ github.workspace }}/patch/smb.conf /mnt/rootfs/etc/samba/smb.conf
           sudo ln -sf /usr/share/zoneinfo/Asia/Shanghai /mnt/rootfs/etc/localtime
-          
+
           sudo mkdir -p /mnt/rootfs/etc/default
           sudo cp ${{ github.workspace }}/patch/locale.conf /mnt/rootfs/etc/default/locale.conf
           sudo cp ${{ github.workspace }}/patch/locale.gen /mnt/rootfs/etc/locale.gen
-          
+
           sudo cp ${{ github.workspace }}/patch/resize_rootfs.sh /mnt/rootfs/root/resize_rootfs.sh
           sudo chmod 755 /mnt/rootfs/root/resize_rootfs.sh
           sudo cp ${{ github.workspace }}/patch/.bashrc /mnt/rootfs/root/.bashrc
           sudo chmod 0644 /mnt/rootfs/root/.bashrc
-          
+
           # 复制 MBR 专用安装脚本
           sudo mkdir -p /mnt/rootfs/root
           sudo chmod 700 /mnt/rootfs/root
@@ -161,6 +162,8 @@ jobs:
           ROOTFS_UUID="${{ env.ROOTFS_UUID }}"
           KVER="${{ env.KVER }}"
 
+          # 防御性创建所有 bind mount 目标，避免 mount point does not exist
+          sudo mkdir -p /mnt/rootfs/dev /mnt/rootfs/proc /mnt/rootfs/sys /mnt/rootfs/boot/efi
           sudo mount --bind /dev /mnt/rootfs/dev
           sudo mount --bind /proc /mnt/rootfs/proc
           sudo mount --bind /sys /mnt/rootfs/sys
@@ -191,7 +194,7 @@ jobs:
             bash -c 'apt-get update && apt-get install -y --no-install-recommends \
               grub-pc grub-efi-amd64 grub-efi-ia32 parted dosfstools e2fsprogs rsync \
               fake-hwclock systemd-timesyncd usbutils pciutils evtest kbd zstd'
-          
+
           sudo chroot /mnt/rootfs systemctl enable systemd-timesyncd || true
           sudo chroot /mnt/rootfs systemctl enable fake-hwclock || true
 
@@ -263,13 +266,13 @@ jobs:
             ${{ env.WORK_DIR }}/debian-rootfs-mbr-j1800.img.gz.sha256
           body: |
             &zwnj;**J1800 专用 MBR 镜像**&zwnj;
-            
+
             &zwnj;**硬件适配**&zwnj;: Intel Celeron J1800 (2核)
             &zwnj;**分区格式**&zwnj;: MBR (兼容性最佳)
-            &zwnj;**内核参数**&zwnj;: 
+            &zwnj;**内核参数**&zwnj;:
             - `isolcpus=1`: 隔离第二个核心用于实时音频
             - `irqaffinity=0`: 中断强制在 CPU0
-            
+
             &zwnj;**安装**&zwnj;:
             1. 写入 U 盘/硬盘
             2. 启动后运行 `sudo sh /root/install.sh`
