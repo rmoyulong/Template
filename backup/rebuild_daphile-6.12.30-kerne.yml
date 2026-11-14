@@ -8,6 +8,10 @@ on:
         required: true
         type: boolean
         default: true
+  push:
+    paths:
+      - ".github/workflows/rebuild_daphile-6.12.30-kerne.yml"
+      - "kernel_config_migration_7.3.x/new.conf"        
 
 permissions:
   contents: write
