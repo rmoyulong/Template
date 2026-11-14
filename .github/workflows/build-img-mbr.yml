@@ -190,10 +190,35 @@ jobs:
           UUID=${ROOTFS_UUID}  /  ext4  errors=remount-ro  0  1
           EOF
 
+                    # 基础工具（不含任何 grub-* 包）
           sudo chroot /mnt/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
             bash -c 'apt-get update && apt-get install -y --no-install-recommends \
-              grub-pc grub-efi-amd64 grub-efi-ia32 parted dosfstools e2fsprogs rsync \
+              parted dosfstools e2fsprogs rsync \
               fake-hwclock systemd-timesyncd usbutils pciutils evtest kbd zstd'
+
+          sudo chroot /mnt/rootfs systemctl enable systemd-timesyncd || true
+          sudo chroot /mnt/rootfs systemctl enable fake-hwclock || true
+
+          # ---- GRUB BIOS (i386-pc) ----
+          sudo chroot /mnt/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+            bash -c 'apt-get install -y --no-install-recommends grub-pc'
+          sudo chroot /mnt/rootfs /bin/bash -c "grub-install --target=i386-pc --recheck --force ${LOOP}"
+          sudo chroot /mnt/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+            bash -c 'apt-get purge -y grub-pc'
+
+          # ---- GRUB UEFI x86_64 ----
+          sudo chroot /mnt/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+            bash -c 'apt-get install -y --no-install-recommends grub-efi-amd64'
+          sudo chroot /mnt/rootfs /bin/bash -c "grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck"
+          sudo chroot /mnt/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+            bash -c 'apt-get purge -y grub-efi-amd64'
+
+          # ---- GRUB UEFI IA32 ----
+          sudo chroot /mnt/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+            bash -c 'apt-get install -y --no-install-recommends grub-efi-ia32'
+          sudo chroot /mnt/rootfs /bin/bash -c "grub-install --target=i386-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck"
+          sudo chroot /mnt/rootfs /usr/bin/env DEBIAN_FRONTEND=noninteractive \
+            bash -c 'apt-get purge -y grub-efi-ia32'
 
           sudo chroot /mnt/rootfs systemctl enable systemd-timesyncd || true
           sudo chroot /mnt/rootfs systemctl enable fake-hwclock || true
