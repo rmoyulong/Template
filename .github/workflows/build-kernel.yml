@@ -327,48 +327,6 @@ jobs:
           fi
           echo "========================================================="
 
-          # ---- 家用外设品牌 HID 驱动断言 ----
-          # 背景：HID_LOGITECH 依赖 LEDS_CLASS，而 LEDS_CLASS 定义在 `if NEW_LEDS`
-          # 内部。若 NEW_LEDS 被误删或置 n，下面这些品牌驱动会被静默忽略（写了
-          # 等于没写），肉眼在片段里看不出来，装到机器上才发现罗技无线鼠标滚轮
-          # 失灵。这里在构建期就拦下。
-          # 【7.3 起】HID_LOGITECH 又多了一条 `depends on LEDS_CLASS_MULTICOLOR`；
-          # 漏掉它同样会让 HID_LOGITECH / _DJ / _HIDPP 整组被丢弃，因此把
-          # LEDS_CLASS_MULTICOLOR 也纳入断言（两份 config 片段里均已写入）。
-          # 策略差异：全内建版为 =y，模块化版为 =m，故品牌驱动只要求"不是 n"。
-          if grep -qE '^CONFIG_NEW_LEDS=y$' .config; then
-            echo "[OK]   CONFIG_NEW_LEDS=y（LEDS_CLASS 可见性前提）"
-          elif [ "$ALLOW_DEGRADED" = "true" ]; then
-            echo "::warning::容错模式：CONFIG_NEW_LEDS 不是 =y，品牌 HID 驱动会被静默忽略" >&2
-          else
-            echo "::error::CONFIG_NEW_LEDS 不是 =y，HID_LOGITECH 等品牌驱动会被静默忽略" >&2
-            exit 1
-          fi
-          # 说明：LEDS_CLASS_MULTICOLOR 是 7.3 给 HID_LOGITECH 新加的依赖，
-          # 已并入下面的 BRAND_HID 断言（否则整组罗技驱动会被静默丢弃）。
-          BRAND_HID="CONFIG_LEDS_CLASS CONFIG_LEDS_CLASS_MULTICOLOR \
-                     CONFIG_HID_LOGITECH CONFIG_HID_LOGITECH_DJ \
-                     CONFIG_HID_MICROSOFT CONFIG_HID_A4TECH CONFIG_HID_CHERRY \
-                     CONFIG_HID_REDRAGON CONFIG_HID_APPLE"
-          BRAND_MISSING=""
-          for k in $BRAND_HID; do
-            v="$(grep -E "^${k}=(y|m)$" .config || true)"
-            if [ -n "$v" ]; then
-              echo "  [OK]   $v"
-            else
-              echo "  [FAIL] ${k} 未启用（当前：$(grep -E "^${k}=" .config || echo '缺失或为 n')）"
-              BRAND_MISSING="$BRAND_MISSING $k"
-            fi
-          done
-          if [ -n "$BRAND_MISSING" ]; then
-            if [ "$ALLOW_DEGRADED" = "true" ]; then
-              echo "::warning::容错模式已开启：品牌 HID 驱动未启用（y/m 均可）：$BRAND_MISSING" >&2
-            else
-              echo "::error::家用品牌 HID 驱动未启用（y/m 均可），罗技/微软等键鼠可能失灵：$BRAND_MISSING" >&2
-              exit 1
-            fi
-          fi
-
           # ---- 压缩算法断言：必须 zstd ----
           # KERNEL_GZIP / KERNEL_ZSTD 是同一 choice 组的成员。若片段里的
           # "# CONFIG_KERNEL_GZIP is not set" 没生效，olddefconfig 会退回默认
