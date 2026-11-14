@@ -1,0 +1,164 @@
+name: 编译 Bootable IMG (MBR 版 - J1800 双核专用)
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/build-img-mbr.yml'
+      - 'patch/**'
+  workflow_dispatch:
+  release:
+    types: [ published ]
+
+env:
+  KERNEL_VER: "7.3.4"
+  KERNEL_PKG: "linux-7.3.4.tar.xz"
+  KERNEL_URL: "https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.4.tar.xz"
+  ROOTFS_URL: "https://github.com/rmoyulong/Template/releases/download/rootfs-bookworm-latest/rootfs.tar.gz"
+  DEBIAN_FRONTEND: noninteractive
+  IMG_NAME: "debian-bookworm-rt7.3.4-j1800-mbr.img"
+
+jobs:
+  build-mbr-image:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: 检出仓库代码
+        uses: actions/checkout@v4
+
+      - name: 安装编译依赖
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential bc bison flex libssl-dev libelf-dev parted dosfstools e2fsprogs qemu-user-static debootstrap rsync wget xz-utils grub-pc-bin grub-efi-amd64-bin grub-efi-ia32-bin initramfs-tools zstd cpio python3-yaml
+
+      - name: 下载 Linux 内核源码
+        run: |
+          test -f "$KERNEL_PKG" || wget -q --show-progress -O "$KERNEL_PKG" "$KERNEL_URL"
+          tar -xJf "$KERNEL_PKG"
+          cd "linux-$KERNEL_VER"
+
+      - name: 应用全内建 PREEMPT_RT 内核配置
+        run: |
+          cd "linux-$KERNEL_VER"
+          make x86_64_defconfig
+          scripts/config --enable CONFIG_PREEMPT_RT --enable CONFIG_EXPERT --enable CONFIG_PREEMPT
+          scripts/config --disable CONFIG_PREEMPT_LAZY
+          scripts/config --enable CONFIG_NO_HZ_IDLE --enable CONFIG_NO_HZ_FULL
+          scripts/config --enable CONFIG_RCU_EXPERT --enable CONFIG_RCU_NOCB_CPU
+          scripts/config --set-str CONFIG_LOCALVERSION "-rt"
+          scripts/config --enable CONFIG_BTRFS_FS --enable CONFIG_BTRFS_FS_POSIX_ACL
+          make olddefconfig
+
+      - name: 编译内核与模块
+        run: |
+          cd "linux-$KERNEL_VER"
+          make -j"$(nproc)" bzImage
+          make -j"$(nproc)" modules
+
+      - name: 安装模块到临时目录
+        run: |
+          cd "linux-$KERNEL_VER"
+          INSTALL_MOD_PATH=../modules-out make modules_install
+          cp arch/x86/boot/bzImage ../bzImage-rt
+          cp .config ../config-rt
+
+      - name: 创建镜像并分区
+        run: |
+          mkdir -p rootfs-mount modules-out
+          truncate -s 4G "$IMG_NAME"
+          parted -s "$IMG_NAME" mklabel msdos
+          parted -s "$IMG_NAME" mkpart primary fat32 1MiB 201MiB
+          parted -s "$IMG_NAME" set 1 boot on
+          parted -s "$IMG_NAME" mkpart primary ext4 201MiB 100%
+          partprobe "$IMG_NAME" || true
+          LOOP=$(sudo losetup --find --show --partscan "$IMG_NAME")
+          echo "LOOP=$LOOP" >> "$GITHUB_ENV"
+          sudo mkfs.vfat -F32 "${LOOP}p1"
+          sudo mkfs.ext4 -F -L rootfs "${LOOP}p2"
+
+      - name: 挂载并解压 rootfs
+        run: |
+          sudo mount "${LOOP}p2" rootfs-mount
+          wget -q --show-progress -O rootfs.tar.gz "$ROOTFS_URL"
+          sudo tar -xzf rootfs.tar.gz -C rootfs-mount --numeric-owner --xattrs --acls
+          sudo mkdir -p rootfs-mount/{proc,sys,dev,run,tmp,mnt/aliyundrive,mnt/boot,mnt/rootfs,mnt/music,mnt/sd,mnt/usb,mnt/NAS,media,boot/efi}
+          sudo chmod 1777 rootfs-mount/tmp
+          sudo mount "${LOOP}p1" rootfs-mount/boot/efi
+
+      - name: 安装内核模块并准备 chroot
+        run: |
+          KVER="${KERNEL_VER}-rt"
+          sudo mkdir -p rootfs-mount/lib/modules rootfs-mount/boot
+          sudo cp -a modules-out/lib/modules/. rootfs-mount/lib/modules/
+          sudo cp bzImage-rt "rootfs-mount/boot/vmlinuz-${KVER}"
+          sudo cp config-rt "rootfs-mount/boot/config-${KVER}"
+          sudo mkdir -p rootfs-mount/usr/lib/grub
+          for t in i386-pc x86_64-efi i386-efi; do
+            if [ -d "/usr/lib/grub/$t" ]; then
+              sudo rm -rf "rootfs-mount/usr/lib/grub/$t"
+              sudo cp -a "/usr/lib/grub/$t" rootfs-mount/usr/lib/grub/
+            fi
+          done
+          sudo mount --bind /dev rootfs-mount/dev
+          sudo mount --bind /proc rootfs-mount/proc
+          sudo mount --bind /sys rootfs-mount/sys
+
+      - name: 写入 fstab 并安装 GRUB
+        run: |
+          ROOT_UUID=$(sudo blkid -s UUID -o value "${LOOP}p2")
+          EFI_UUID=$(sudo blkid -s UUID -o value "${LOOP}p1")
+          printf 'UUID=%s / ext4 errors=remount-ro 0 1\nUUID=%s /boot/efi vfat umask=0077 0 1\n' "$ROOT_UUID" "$EFI_UUID" | sudo tee rootfs-mount/etc/fstab
+          sudo chroot rootfs-mount /bin/bash -c "grub-install --target=i386-pc --recheck --force '${LOOP}' || true; grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true; grub-install --target=i386-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck || true"
+          test -f rootfs-mount/boot/grub/i386-pc/normal.mod || sudo grub-install --target=i386-pc --boot-directory=rootfs-mount/boot --force "${LOOP}" || true
+
+      - name: 重建 initramfs
+        run: |
+          KVER="${KERNEL_VER}-rt"
+          printf 'MODULES=dep\nCOMPRESS=zstd\nFRAMEBUFFER=y\n' | sudo tee rootfs-mount/etc/initramfs-tools/initramfs.conf
+          sudo chroot rootfs-mount /bin/bash -c "update-initramfs -c -k ${KVER} 2>/dev/null || true"
+
+      - name: 写入 grub.cfg J1800 双核配置
+        run: |
+          KVER="${KERNEL_VER}-rt"
+          ROOT_UUID=$(sudo blkid -s UUID -o value "${LOOP}p2")
+          sudo mkdir -p rootfs-mount/boot/grub
+          G=/tmp/grub.cfg
+          echo "set default=0" | sudo tee $G
+          echo "set timeout=5" | sudo tee -a $G
+          echo "insmod all_video" | sudo tee -a $G
+          echo "set gfxmode=auto" | sudo tee -a $G
+          echo "set gfxpayload=keep" | sudo tee -a $G
+          echo "" | sudo tee -a $G
+          echo "menuentry \"Debian ${KVER} (J1800 RT 双核实时)\" {" | sudo tee -a $G
+          echo "    linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw quiet splash vt.global_cursor_default=0 pcie_aspm=off intel_idle.max_cstate=1 isolcpus=1 nohz_full=1 rcu_nocbs=1 irqaffinity=0 tsc=reliable" | sudo tee -a $G
+          echo "    initrd /boot/initrd.img-${KVER}" | sudo tee -a $G
+          echo "}" | sudo tee -a $G
+          echo "" | sudo tee -a $G
+          echo "menuentry \"Debian ${KVER} (recovery 恢复模式)\" {" | sudo tee -a $G
+          echo "    linux /boot/vmlinuz-${KVER} root=LABEL=rootfs root=UUID=${ROOT_UUID} rw single console=tty1" | sudo tee -a $G
+          echo "    initrd /boot/initrd.img-${KVER}" | sudo tee -a $G
+          echo "}" | sudo tee -a $G
+          sudo cp $G rootfs-mount/boot/grub/grub.cfg
+          sudo mkdir -p rootfs-mount/boot/efi/EFI/debian rootfs-mount/boot/efi/EFI/BOOT
+          sudo cp rootfs-mount/boot/grub/grub.cfg rootfs-mount/boot/efi/EFI/debian/grub.cfg 2>/dev/null || true
+          sudo cp rootfs-mount/boot/grub/grub.cfg rootfs-mount/boot/efi/EFI/BOOT/grub.cfg 2>/dev/null || true
+          test -f rootfs-mount/boot/efi/EFI/debian/grubx64.efi && sudo cp rootfs-mount/boot/efi/EFI/debian/grubx64.efi rootfs-mount/boot/efi/EFI/BOOT/BOOTX64.EFI 2>/dev/null || true
+          test -f rootfs-mount/boot/efi/EFI/debian/grubia32.efi && sudo cp rootfs-mount/boot/efi/EFI/debian/grubia32.efi rootfs-mount/boot/efi/EFI/BOOT/BOOTIA32.EFI 2>/dev/null || true
+
+      - name: 卸载压缩
+        run: |
+          sync
+          sudo umount -R rootfs-mount 2>/dev/null || true
+          sudo losetup -d "${LOOP}" || true
+          gzip -f "$IMG_NAME"
+          ls -lh *.img.gz
+
+      - name: 上传镜像到 Release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "${{ env.IMG_NAME }}.gz"
+          tag: "image-debian-J1800-MBR-latest"
+          name: "Debian RT 7.3.4 IMG (J1800 MBR 双核专用)"
+          body: |
+            J1800 双核专用 PREEMPT_RT 实时系统镜像
+            分区表: MBR/msdos
+            启动方式: BIOS + 64位 UEFI + 32位 UEFI
+            实时参数: isolcpus=1 nohz_full=1 rcu_nocbs=1 irqaffinity=0
+          allowUpdates: true
