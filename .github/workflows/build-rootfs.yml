@@ -19,7 +19,8 @@ env:
   MIRROR: http://ftp.cn.debian.org/debian/
   ROOTFS_DIR: ${{ github.workspace }}/rootfs
   OUT_DIR: ${{ github.workspace }}/out
-
+  KERNEL_VERSION: 7.3.4
+  
 jobs:
   build-rootfs:
     name: 构建 RootFS
@@ -477,7 +478,7 @@ jobs:
             **🧊 固件信息**
 
             - ➦ 💻 固件平台：x86-64-linux
-            - ➦ 🚀 内核版本：7.3.3（配合 kernel-image 发布使用）
+            - ➦ 🚀 内核版本：${{ env.KERNEL_VERSION }}（配合 kernel-image 发布使用）
             - ➦ 📦 软件包：openssh-server / vsftpd / nginx / php8.2-cgi / php8.2-fpm / LMS
             - ➦ 🔌 网卡固件：firmware-realtek / firmware-iwlwifi / firmware-linux-free
             - ➦ 🧩 initramfs：MODULES=dep + COMPRESS=zstd + FRAMEBUFFER，体积最小、解压最快；固件 hook（zz-firmware）只收 rtl_nic（iwlwifi 已屏蔽，其固件不再入 initramfs）
