@@ -195,6 +195,8 @@ jobs:
           ./scripts/config --enable SND_HRTIMER
           ./scripts/config --enable SND_ALOOP
           ./scripts/config --enable SND_PCI
+          ./scripts/config --enable SND_USB
+          ./scripts/config --enable SND_USB_AUDIO
           
           # Intel HDA stack: modules.
           if [ "${{ matrix.tag }}" = "rt-mod" ]; then
