@@ -386,7 +386,7 @@ jobs:
           #   -b 2048:3445     官方默认缓冲（不加大，避免延迟升高）
           # 注意：不要加 -D（DSD 声明），ALC662 不支持 DSD，声明后播 DSD 会无声或出噪声。
           # Please do not include -z to make squeezelite daemonise itself.
-          SB_EXTRA_ARGS="-p 99 -r 44100-48000 -b 2048:3445"
+          SB_EXTRA_ARGS="-p 99 -r 44100-48000 -b 2048:3445 -C 5"
           EOF
 
           echo "----- /etc/default/squeezelite -----"
