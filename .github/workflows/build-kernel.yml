@@ -123,7 +123,16 @@ jobs:
           wget -q "$URL"
           tar -xJf "linux-${KERNEL_VERSION}.tar.xz"
           ls -d "linux-${KERNEL_VERSION}"
-
+          
+      - name: 恢复 ccache 缓存
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: "${{ runner.os }}-ccache-${{ env.KERNEL_VERSION }}-${{ github.sha }}"
+          restore-keys: |
+            ${{ runner.os }}-ccache-${{ env.KERNEL_VERSION }}-
+            ${{ runner.os }}-ccache-
+            
       - name: 配置内核
         working-directory: linux-${{ env.KERNEL_VERSION }}
         run: |
@@ -351,7 +360,12 @@ jobs:
 
       - name: 构建内核与模块
         working-directory: linux-${{ env.KERNEL_VERSION }}
-        run: make -j$(nproc) bzImage modules
+        run: |
+          export CCACHE_DIR="$HOME/.ccache"
+          ccache --max-size=5G
+          ccache -z
+          make -j$(nproc) bzImage modules
+          ccache -s
 
       - name: 将模块安装至暂存目录
         working-directory: linux-${{ env.KERNEL_VERSION }}
