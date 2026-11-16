@@ -104,7 +104,7 @@ jobs:
               python3 \
               rsync \
               wget \
-              git
+              git ccache
 
       - name: 下载内核源码
         run: |
