@@ -364,7 +364,7 @@ jobs:
           export CCACHE_DIR="$HOME/.ccache"
           ccache --max-size=5G
           ccache -z
-          make -j$(nproc) bzImage modules
+          make -j"$(nproc)" CROSS_COMPILE="ccache $CROSS_COMPILE" bzImage modules
           ccache -s
 
       - name: 将模块安装至暂存目录
