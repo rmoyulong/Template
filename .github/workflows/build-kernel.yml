@@ -13,7 +13,7 @@ on:
       - "patch/j1900andj1800-RT-modular.config"
       - "patch/j1900andj1800-RT.config"
 env:
-  KERNEL_VERSION: 7.3.4
+  KERNEL_VERSION: 7.3.5
 
 jobs:
   build_kernel:
