@@ -20,7 +20,7 @@ env:
   MIRROR: http://ftp.cn.debian.org/debian/
   ROOTFS_DIR: ${{ github.workspace }}/rootfs
   OUT_DIR: ${{ github.workspace }}/out
-  KERNEL_VERSION: 7.3.4
+  KERNEL_VERSION: 7.3.5
 
 jobs:
   build-rootfs:
