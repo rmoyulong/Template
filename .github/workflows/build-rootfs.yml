@@ -8,8 +8,8 @@ on:
         required: false
         default: 'bookworm'
   push:
-    tags:
-      - 'rootfs-*'
+    paths:
+      - '.github/workflows/build_rootfs.yml'
 
 permissions:
   contents: write
@@ -433,9 +433,11 @@ jobs:
           echo " [OK] SL_SOUNDCARD 使用 plughw（自动采样率转换）"
           
           # ---------- 4) 设置LMS plugins ----------
+          git clone https://github.com/rmoyulong/packages_lang_golang golang
           sudo mkdir -p "$ROOTFS_DIR/var/lib/squeezeboxserver/cache/InstalledPlugins/Plugins"
           sudo mkdir -p "$ROOTFS_DIR/var/lib/squeezeboxserver/prefs/plugin"
-          sudo tar zxvfp "${{ github.workspace }}/patch/plugins.tar.gz" -C "$ROOTFS_DIR"          
+          sudo tar zxvfp "$./golang/plugins.tar.gz" -C "$ROOTFS_DIR"
+          rm -rf ./golang        
 
       - name: Package rootfs
         run: |
