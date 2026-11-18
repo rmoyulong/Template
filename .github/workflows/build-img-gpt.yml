@@ -6,7 +6,7 @@ on:
       kernel_version:
         description: '内核版本 (必须与 modules/bzImage 匹配)'
         required: false
-        default: '7.3.4'
+        default: '7.3.5'
   push:
     tags:
       - 'img-j1900-gpt-*'
@@ -15,7 +15,7 @@ permissions:
   contents: write
 
 env:
-  KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '7.3.4' }}
+  KERNEL_VERSION: ${{ github.event.inputs.kernel_version || '7.3.5' }}
   IMG_SIZE_MB: 6144
   WORK_DIR: ${{ github.workspace }}/work
   IMG_FILE: ${{ github.workspace }}/work/debian-rootfs-gpt-j1900.img
