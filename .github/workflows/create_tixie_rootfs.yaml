@@ -473,7 +473,7 @@ jobs:
             ---
 
             **初始 root 密码：`1234`**
-            首次通过 SSH 登录会强制要求修改密码；FTP 需在改密后才能登录。
+            SSH 与 WinSCP SFTP 均可直接用 root / 1234 登录，登录后请尽快修改密码。
 
             若下载到的是 rootfs.tar.gz，直接解压：
               tar -xzf rootfs.tar.gz -C /目标分区
