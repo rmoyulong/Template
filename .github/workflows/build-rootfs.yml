@@ -9,7 +9,7 @@ on:
         default: 'bookworm'
   push:
     paths:
-      - '.github/workflows/build_rootfs.yml'
+      - '.github/workflows/build-rootfs.yml'
 
 permissions:
   contents: write
