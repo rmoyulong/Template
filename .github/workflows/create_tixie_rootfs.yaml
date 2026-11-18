@@ -9,7 +9,7 @@ on:
         default: 'trixie'
   push:
     paths:
-      - '.github/workflows/create_tixie_rootfs.yml'
+      - '.github/workflows/create_tixie_rootfs.yaml'
 
 permissions:
   contents: write
